@@ -34,7 +34,7 @@ El agente **no** toma los primeros 80 SKU. Analiza hasta `AGENT_CATALOG_CAP` (40
 
 Bundles solo con la **misma categoría** o el mapa `COMPLEMENT_CATEGORIES` (snacks↔bebidas, etc.).
 
-El LLM reintenta 3 veces con backoff. Puerta a otro proveedor: `LLM_PROVIDER` + `LLM_API_KEY` (hoy solo `xai` está cableado).
+El LLM reintenta 3 veces con backoff. Respaldo: `LLM_PROVIDER=openai` + `LLM_API_KEY` (y opcional `LLM_BASE_URL` / `LLM_MODEL`). Si xAI cae y hay clave de respaldo, usa el otro.
 
 ## Implantar en Dyko
 
