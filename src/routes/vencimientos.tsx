@@ -14,7 +14,7 @@ function VencimientosPage() {
   return (
     <AppShell
       title="Vencimientos"
-      subtitle="FEFO: primero lo que vence. Lotes vencidos, críticos (≤7 d) y ventana de 14 días."
+      subtitle="FEFO. Crítico ≤7 días, alerta ≤30, vigilar ≤60. Las promociones respetan margen mínimo salvo pérdida controlada."
     >
       <PageGate>
         <ExpiryBoard />
@@ -29,25 +29,26 @@ function ExpiryBoard() {
 
   const groups = useMemo(() => {
     const expired = metrics.filter((m) => m.expiredQty > 0);
-    const d7 = metrics.filter((m) => m.expiredQty === 0 && m.daysToExpiry !== null && m.daysToExpiry <= 7);
-    const d14 = metrics.filter(
-      (m) => m.daysToExpiry !== null && m.daysToExpiry > 7 && m.daysToExpiry <= 14,
-    );
-    return { expired, d7, d14 };
+    const critico = metrics.filter((m) => m.expiredQty === 0 && m.expiryNivel === "critico");
+    const alerta = metrics.filter((m) => m.expiryNivel === "alerta");
+    const vigilar = metrics.filter((m) => m.expiryNivel === "vigilar");
+    return { expired, critico, alerta, vigilar };
   }, [metrics]);
 
-  const loss7 = [...groups.expired, ...groups.d7].reduce((s, m) => s + m.expiring14Qty * m.product.cost, 0);
+  const loss = [...groups.expired, ...groups.critico].reduce((s, m) => s + m.expiring7Qty * m.product.cost, 0);
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Vencidos" value={String(groups.expired.length)} />
-        <Stat label="≤ 7 días" value={String(groups.d7.length)} />
-        <Stat label="En riesgo a costo" value={formatColon(loss7)} />
+        <Stat label="Crítico ≤7 d" value={String(groups.critico.length)} />
+        <Stat label="Alerta ≤30 d" value={String(groups.alerta.length)} />
+        <Stat label="En riesgo a costo" value={formatColon(loss)} />
       </div>
-      <Group title="Vencidos — dar de baja o liquidar" rows={groups.expired} onOpen={setOpen} />
-      <Group title="Crítico — 7 días o menos" rows={groups.d7} onOpen={setOpen} />
-      <Group title="Ventana 8–14 días" rows={groups.d14} onOpen={setOpen} />
+      <Group title="Vencidos — liquidar o dar de baja" rows={groups.expired} onOpen={setOpen} />
+      <Group title="Crítico — 7 días o menos" rows={groups.critico} onOpen={setOpen} />
+      <Group title="Alerta — 8 a 30 días" rows={groups.alerta} onOpen={setOpen} />
+      <Group title="Vigilar — 31 a 60 días" rows={groups.vigilar} onOpen={setOpen} />
       <ProductSheet metric={open} onClose={() => setOpen(null)} />
     </div>
   );

@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { sendToAgent } from "@/components/agent/agent-panel";
 import { PageGate } from "@/components/inventory/page-gate";
 import { StatusBadge } from "@/components/inventory/status-badge";
@@ -13,17 +14,17 @@ import { CATEGORY_LABEL, type Category } from "@/lib/inventory/types";
 export const Route = createFileRoute("/")({ component: Home });
 
 const QUICK = [
-  { label: "Quiebres de stock", prompt: SUGGESTIONS[0] },
-  { label: "Por vencer", prompt: SUGGESTIONS[1] },
-  { label: "Qué pedir y qué no", prompt: SUGGESTIONS[2] },
-  { label: "Qué promocionar", prompt: SUGGESTIONS[3] },
+  { label: "Quiebres de stock", prompt: SUGGESTIONS[1] },
+  { label: "Por vencer", prompt: SUGGESTIONS[2] },
+  { label: "Qué pedir y qué no", prompt: SUGGESTIONS[3] },
+  { label: "Qué promocionar", prompt: SUGGESTIONS[4] },
 ];
 
 function Home() {
   return (
     <AppShell
       title="Panel de bodega"
-      subtitle="DARA vigila existencias, vencimientos y rotación para que pidas lo correcto y muevas lo que se estanca."
+      subtitle="InventarioIA vigila existencias, vencimientos y rotación. Propone compras y promociones; tú apruebas."
     >
       <PageGate>
         <Dashboard />
@@ -33,7 +34,7 @@ function Home() {
 }
 
 function Dashboard() {
-  const { kpis: stats, alerts, briefing, metrics, snapshot } = useAnalysis();
+  const { kpis: stats, alerts, briefing, metrics, snapshot, mode, report } = useAnalysis();
   if (!stats) return null;
 
   const byCat = new Map<Category, { n: number; healthy: number }>();
@@ -47,7 +48,7 @@ function Dashboard() {
   const tiles = [
     { label: "Valor a costo", value: formatColon(stats.stockValue), hint: `${stats.skuCount} SKU` },
     { label: "Críticos / agotados", value: String(stats.crit), hint: "Requieren pedido" },
-    { label: "Por vencer (14 d)", value: String(stats.expiring), hint: "FEFO y promoción" },
+    { label: "Por vencer (30 d)", value: String(stats.expiring), hint: "FEFO y promoción" },
     { label: "Pedido sugerido", value: formatColon(stats.orderValue), hint: `${stats.orderLines} líneas` },
   ];
 
@@ -68,7 +69,7 @@ function Dashboard() {
       <section className="grid gap-3 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardContent className="p-5">
-            <p className="text-xs tracking-wide text-muted uppercase">Briefing de DARA</p>
+            <p className="text-xs tracking-wide text-muted uppercase">Briefing de InventarioIA</p>
             <ul className="mt-3 space-y-2">
               {briefing.map((line) => (
                 <li key={line} className="border-l-2 border-accent pl-3 text-sm">
@@ -78,7 +79,7 @@ function Dashboard() {
             </ul>
             <div className="mt-4 flex flex-wrap gap-2">
               {QUICK.map((s) => (
-                <Button key={s.label} variant="outline" size="sm" onClick={() => sendToAgent(s.prompt, snapshot)}>
+                <Button key={s.label} variant="outline" size="sm" onClick={() => sendToAgent(s.prompt, snapshot, mode)}>
                   {s.label}
                 </Button>
               ))}
@@ -110,6 +111,23 @@ function Dashboard() {
         </Card>
       </section>
 
+      {report ? (
+        <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs tracking-wide text-muted uppercase">Reporte {report.modo} · {report.fecha_analisis}</p>
+            <CopyJson json={report} />
+          </div>
+          <p className="text-sm leading-relaxed">{report.resumen_ejecutivo}</p>
+          {report.datos_faltantes_o_incertidumbre.length ? (
+            <ul className="mt-3 space-y-1 text-xs text-muted">
+              {report.datos_faltantes_o_incertidumbre.slice(0, 3).map((d) => (
+                <li key={d}>· {d}</li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
       <section>
         <div className="mb-3 flex items-end justify-between">
           <h2 className="font-display text-2xl tracking-tight">Alertas</h2>
@@ -139,5 +157,22 @@ function Dashboard() {
         </div>
       </section>
     </div>
+  );
+}
+
+function CopyJson({ json }: { json: unknown }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={async () => {
+        await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+        setDone(true);
+        window.setTimeout(() => setDone(false), 1600);
+      }}
+    >
+      {done ? "JSON copiado" : "Copiar JSON Dyko"}
+    </Button>
   );
 }
