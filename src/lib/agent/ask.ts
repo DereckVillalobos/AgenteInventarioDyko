@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { analyzeSnapshots, briefing, buildAlerts, buildReport, kpis } from "@/lib/inventory/analytics";
-import type { AgentMode, CatalogSnapshot, ProductMetrics } from "@/lib/inventory/types";
-import { CATEGORY_LABEL, DEFAULT_PARAMS } from "@/lib/inventory/types";
+import { selectCatalogForAgent } from "@/lib/inventory/select";
+import type { AgentMode, BusinessParams, CatalogCoverage, CatalogSnapshot, ProductMetrics, Tenant } from "@/lib/inventory/types";
+import { CATEGORY_LABEL, DEFAULT_PARAMS, DEFAULT_TENANT } from "@/lib/inventory/types";
 import { formatColon, formatQty, todayLocalIso } from "@/lib/inventory/format";
 import { analyzeShrinkage, buildShrinkageReport, shrinkageKpis } from "@/lib/shrinkage/analytics";
 import type { PhysicalCount } from "@/lib/shrinkage/types";
@@ -16,6 +17,8 @@ type AskInput = {
   mode?: AgentMode;
   domain?: AgentDomain;
   counts?: PhysicalCount[];
+  params?: BusinessParams;
+  tenant?: Tenant;
 };
 
 const TOOLS = [
@@ -200,6 +203,8 @@ function runTool(
   metrics: ProductMetrics[],
   mode: AgentMode,
   counts: PhysicalCount[],
+  params: BusinessParams,
+  coverage: CatalogCoverage,
 ): { result: unknown; summary: string } {
   let args: Record<string, unknown> = {};
   try {
@@ -232,7 +237,7 @@ function runTool(
   }
 
   if (name === "reporte_inventario") {
-    const report = buildReport(metrics, mode);
+    const report = buildReport(metrics, mode, todayLocalIso(), coverage);
     return { summary: `Reporte ${mode}`, result: report };
   }
 
@@ -245,7 +250,7 @@ function runTool(
       result: {
         today: todayLocalIso(),
         modo: mode,
-        margenMinimo: `${Math.round(DEFAULT_PARAMS.margenMinimo * 100)}%`,
+        margenMinimo: `${Math.round(params.margenMinimo * 100)}%`,
         kpis: {
           ...stats,
           stockValue: formatColon(stats.stockValue),
@@ -256,6 +261,12 @@ function runTool(
           valorMerma: formatColon(sk.valorMerma),
           hurto: sk.hurto,
           sinConteo: sk.sinConteo,
+        },
+        coberturaCatalogo: {
+          recibidos: coverage.total,
+          analizados: coverage.analyzed,
+          omitidos: coverage.omitted,
+          dato_faltante: coverage.note,
         },
         briefing: briefing(metrics),
         alerts,
@@ -315,7 +326,7 @@ function runTool(
   }
 
   if (name === "expiries") {
-    const days = Number(args.days ?? DEFAULT_PARAMS.vencimientoAlertaDias);
+    const days = Number(args.days ?? params.vencimientoAlertaDias);
     const rows = metrics
       .filter((m) => m.expiredQty > 0 || (m.daysToExpiry !== null && m.daysToExpiry <= days))
       .sort((a, b) => (a.daysToExpiry ?? -99) - (b.daysToExpiry ?? -99))
@@ -365,7 +376,7 @@ function runTool(
       .map((m) => ({
         ...compactMetric(m),
         suggestedPrice: Math.round(m.product.price * (1 - m.promo!.discount / 100)),
-        margenMinimo: Math.round(DEFAULT_PARAMS.margenMinimo * 100),
+        margenMinimo: Math.round(params.margenMinimo * 100),
       }));
     return { summary: `${rows.length} promociones`, result: rows };
   }
@@ -418,7 +429,7 @@ type ToolCall = {
   function: { name: string; arguments: string };
 };
 
-async function complete(apiKey: string, messages: OaiMessage[]) {
+async function xaiComplete(apiKey: string, messages: OaiMessage[]) {
   const res = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -436,15 +447,69 @@ async function complete(apiKey: string, messages: OaiMessage[]) {
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`xAI ${res.status}: ${body.slice(0, 240)}`);
+    const err = new Error(`xAI ${res.status}: ${body.slice(0, 240)}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return (await res.json()) as {
     choices: { message: OaiMessage & { content?: string | null; tool_calls?: ToolCall[] } }[];
   };
 }
 
-function systemPrompt(today: string, mode: AgentMode, domain: AgentDomain, minM: number) {
-  const merma = `Eres MermaIA, agente hermano de InventarioIA en Dyko Intelligence (Puntarenas, Costa Rica).
+type ChatProvider = {
+  id: string;
+  complete: (apiKey: string, messages: OaiMessage[]) => ReturnType<typeof xaiComplete>;
+};
+
+/** Door for a backup provider: set LLM_PROVIDER + LLM_API_KEY. Only `xai` is wired today. */
+const PROVIDERS: Record<string, ChatProvider> = {
+  xai: { id: "xai", complete: xaiComplete },
+};
+
+function resolveProvider(): ChatProvider {
+  const id = (process.env.LLM_PROVIDER ?? "xai").toLowerCase();
+  return PROVIDERS[id] ?? PROVIDERS.xai;
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRetryable(err: unknown): boolean {
+  const status = typeof err === "object" && err && "status" in err ? Number((err as { status?: number }).status) : 0;
+  if (status === 400 || status === 401 || status === 403 || status === 404) return false;
+  return true;
+}
+
+async function complete(apiKey: string, messages: OaiMessage[]) {
+  const provider = resolveProvider();
+  const key = provider.id === "xai" ? apiKey : (process.env.LLM_API_KEY ?? apiKey);
+  let last: unknown;
+  const waits = [0, 400, 1200];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (waits[attempt]) await sleep(waits[attempt]);
+    try {
+      return await provider.complete(key, messages);
+    } catch (err) {
+      last = err;
+      if (!isRetryable(err)) break;
+    }
+  }
+  throw last instanceof Error ? last : new Error("El proveedor de IA no respondió.");
+}
+
+function systemPrompt(
+  today: string,
+  mode: AgentMode,
+  domain: AgentDomain,
+  minM: number,
+  tenant: Tenant,
+  params: BusinessParams,
+  coverageNote: string | null,
+) {
+  const where = `${tenant.company} · ${tenant.branch}`;
+  const cut = coverageNote ? `\nDato faltante de catálogo: ${coverageNote}` : "";
+  const merma = `Eres MermaIA, agente hermano de InventarioIA en Dyko Intelligence (${where}).
 Hoy es ${today}. Moneda: colones (CRC).
 Hablas español, claro y operativo. Sin emojis.
 
@@ -456,11 +521,11 @@ Reglas:
 - posible_hurto es hipótesis (faltante alto en no perecedero sin vencimiento). No es sentencia.
 - merma_operativa: perecedero / vencido. error_probable_conteo: 1 unidad de más o de menos en stock grande.
 - Respuesta: 3–5 líneas + SKU, diferencia, colones, acción a aprobar.
-- Cierra con 1–3 pasos de hoy.`;
+- Cierra con 1–3 pasos de hoy.${cut}`;
 
-  const inv = `Eres InventarioIA, analista senior de inventario de Dyko Intelligence (Puntarenas, Costa Rica).
+  const inv = `Eres InventarioIA, analista senior de inventario de Dyko Intelligence (${where}).
 Hoy es ${today}. Moneda: colones (CRC). Modo: ${mode}.
-Margen mínimo aceptable: ${minM}%. Ventanas de vencimiento: crítico ≤7 d, alerta ≤30 d, vigilar ≤60 d.
+Margen mínimo aceptable: ${minM}%. Ventanas de vencimiento: crítico ≤${params.vencimientoCriticoDias} d, alerta ≤${params.vencimientoAlertaDias} d, vigilar ≤${params.vencimientoVigilarDias} d.
 Hablas español, claro y operativo. Sin emojis.
 
 No ejecutas nada: no emites órdenes de compra ni aplicas descuentos. Solo propones; el humano aprueba.
@@ -471,15 +536,16 @@ Reglas:
 - Clasificación de compra: comprar_ya | comprar_pronto | no_comprar | descontinuar | vigilar.
 - Cantidad sugerida = rotación diaria × (lead time + stock de seguridad) − stock actual.
 - Quiebre inminente: días de cobertura < lead time del proveedor.
-- Sobre-stock: cobertura > 90 días.
+- Sobre-stock: cobertura > ${params.sobreStockDias} días.
 - Descuento: nunca bajes el margen por debajo de ${minM}% salvo "pérdida controlada por vencimiento inminente" con justificación.
 - FEFO en perecederos. No pedir si el lote actual cubre la demanda.
-- Modo rápido: solo quiebre inminente y vencimiento ≤7 d.
+- Bundles solo con la misma categoría o categorías complementarias. Nunca mezclar verticales distintos.
+- Modo rápido: solo quiebre inminente y vencimiento ≤${params.vencimientoCriticoDias} d.
 - Modo cuidadoso: reporte completo.
 - Modo verificado: compara ventanas 30 d vs 90 d y señala divergencias.
 - Merma/conteo físico es el agente hermano MermaIA (herramientas reporte_merma, discrepancias). No mezcles merma con la OC.
 - Respuesta al usuario: resumen 3–5 líneas + acciones concretas (SKU, cantidad, colones).
-- Cierra con 1–3 pasos que el administrador debe aprobar hoy.`;
+- Cierra con 1–3 pasos que el administrador debe aprobar hoy.${cut}`;
 
   return domain === "merma" ? merma : inv;
 }
@@ -498,9 +564,18 @@ export const askInventoryAgent = createServerFn({ method: "POST" })
     const mode: AgentMode = data.mode ?? "cuidadoso";
     const domain: AgentDomain = data.domain ?? "inventario";
     const counts = data.counts ?? [];
-    const metrics = analyzeSnapshots(data.catalog.slice(0, 80));
+    const params = data.params ?? DEFAULT_PARAMS;
+    const tenant = data.tenant ?? DEFAULT_TENANT;
     const today = todayLocalIso();
-    const minM = Math.round(DEFAULT_PARAMS.margenMinimo * 100);
+    const selection = selectCatalogForAgent(data.catalog, undefined, today);
+    const coverage: CatalogCoverage = {
+      total: selection.total,
+      analyzed: selection.analyzed,
+      omitted: selection.omitted,
+      note: selection.note,
+    };
+    const metrics = analyzeSnapshots(selection.selected, today, params);
+    const minM = Math.round(params.margenMinimo * 100);
 
     const history = data.messages.slice(-10).map((m) => ({
       role: m.role,
@@ -508,7 +583,7 @@ export const askInventoryAgent = createServerFn({ method: "POST" })
     })) as OaiMessage[];
 
     const messages: OaiMessage[] = [
-      { role: "system", content: systemPrompt(today, mode, domain, minM) },
+      { role: "system", content: systemPrompt(today, mode, domain, minM, tenant, params, coverage.note) },
       ...history,
     ];
     const traces: ToolTrace[] = [];
@@ -535,7 +610,7 @@ export const askInventoryAgent = createServerFn({ method: "POST" })
           tool_calls: calls,
         });
         for (const call of calls) {
-          const ran = runTool(call.function.name, call.function.arguments, metrics, mode, counts);
+          const ran = runTool(call.function.name, call.function.arguments, metrics, mode, counts, params, coverage);
           traces.push({ name: call.function.name, summary: ran.summary });
           messages.push({
             role: "tool",
