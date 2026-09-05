@@ -6,7 +6,7 @@ import { StatusBadge } from "@/components/inventory/status-badge";
 import { AppShell } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { SUGGESTIONS } from "@/lib/agent/store";
+import { SUGGESTIONS, useAgent } from "@/lib/agent/store";
 import { formatColon } from "@/lib/inventory/format";
 import { useAnalysis } from "@/lib/inventory/store";
 import { CATEGORY_LABEL, type Category } from "@/lib/inventory/types";
@@ -14,17 +14,17 @@ import { CATEGORY_LABEL, type Category } from "@/lib/inventory/types";
 export const Route = createFileRoute("/")({ component: Home });
 
 const QUICK = [
-  { label: "Quiebres de stock", prompt: SUGGESTIONS[1] },
-  { label: "Por vencer", prompt: SUGGESTIONS[2] },
-  { label: "Qué pedir y qué no", prompt: SUGGESTIONS[3] },
-  { label: "Qué promocionar", prompt: SUGGESTIONS[4] },
+  { label: "Quiebres de stock", prompt: SUGGESTIONS.inventario[1] },
+  { label: "Por vencer", prompt: SUGGESTIONS.inventario[2] },
+  { label: "Qué pedir y qué no", prompt: SUGGESTIONS.inventario[3] },
+  { label: "Qué promocionar", prompt: SUGGESTIONS.inventario[4] },
 ];
 
 function Home() {
   return (
     <AppShell
       title="Panel de bodega"
-      subtitle="InventarioIA vigila existencias, vencimientos y rotación. Propone compras y promociones; tú apruebas."
+      subtitle="InventarioIA vigila existencias y compras. MermaIA compara teórico vs conteo. Ambos proponen; tú apruebas."
     >
       <PageGate>
         <Dashboard />
@@ -34,7 +34,8 @@ function Home() {
 }
 
 function Dashboard() {
-  const { kpis: stats, alerts, briefing, metrics, snapshot, mode, report } = useAnalysis();
+  const { kpis: stats, alerts, briefing, metrics, snapshot, mode, report, shrinkKpis, shrinkReport } = useAnalysis();
+  const setDomain = useAgent((s) => s.setDomain);
   if (!stats) return null;
 
   const byCat = new Map<Category, { n: number; healthy: number }>();
@@ -110,6 +111,30 @@ function Dashboard() {
           </CardContent>
         </Card>
       </section>
+
+      {shrinkKpis && shrinkReport ? (
+        <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
+          <div className="mb-2 flex items-end justify-between gap-3">
+            <p className="text-xs tracking-wide text-muted uppercase">MermaIA · conteo vs teórico</p>
+            <Link to="/merma" className="text-sm text-muted hover:text-fg">
+              Ver merma
+            </Link>
+          </div>
+          <p className="text-sm leading-relaxed">{shrinkReport.resumen_ejecutivo}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDomain("merma");
+                sendToAgent(SUGGESTIONS.merma[0], snapshot, mode);
+              }}
+            >
+              Preguntar a MermaIA
+            </Button>
+          </div>
+        </section>
+      ) : null}
 
       {report ? (
         <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
