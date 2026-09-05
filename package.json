@@ -1,0 +1,23 @@
+{
+  "name": "agente-inventario-dyko",
+  "private": true,
+  "version": "1.1.0",
+  "description": "InventarioIA + MermaIA para implantar en Dyko. Copia src/ a tu app. Este paquete documenta dependencias; no es el runtime de preview.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/lib/inventory/analytics.test.ts src/lib/shrinkage/analytics.test.ts"
+  },
+  "peerDependencies": {
+    "@tanstack/react-router": "^1.0.0",
+    "@tanstack/react-start": "^1.0.0",
+    "lucide-react": "^0.500.0",
+    "react": "^19.0.0",
+    "zustand": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-router": { "optional": true },
+    "@tanstack/react-start": { "optional": true },
+    "lucide-react": { "optional": true }
+  }
+}
