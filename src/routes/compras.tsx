@@ -1,17 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { BuyBadge, StatusBadge } from "@/components/inventory/status-badge";
 import { PageGate } from "@/components/inventory/page-gate";
-import { StatusBadge } from "@/components/inventory/status-badge";
 import { AppShell } from "@/components/layout/app-shell";
-import { formatColon, formatQty } from "@/lib/inventory/format";
+import { BUY_LABEL, formatColon, formatQty } from "@/lib/inventory/format";
 import { useAnalysis } from "@/lib/inventory/store";
+import type { BuyClass } from "@/lib/inventory/types";
 
 export const Route = createFileRoute("/compras")({ component: ComprasPage });
+
+const ORDER: BuyClass[] = ["comprar_ya", "comprar_pronto", "vigilar", "no_comprar", "descontinuar"];
 
 function ComprasPage() {
   return (
     <AppShell
       title="Plan de compras"
-      subtitle="Qué pedir según rotación y cobertura, y qué no pedir por exceso, vencimiento o rotación muerta."
+      subtitle="Propuestas para aprobación. InventarioIA no emite órdenes: clasifica comprar_ya, comprar_pronto, no_comprar, descontinuar y vigilar."
     >
       <PageGate>
         <PurchaseBoard />
@@ -22,55 +25,49 @@ function ComprasPage() {
 
 function PurchaseBoard() {
   const { metrics } = useAnalysis();
-  const pedir = metrics
-    .filter((m) => m.orderAction !== "no_pedir")
-    .sort((a, b) => {
-      if (a.orderAction !== b.orderAction) return a.orderAction === "urgente" ? -1 : 1;
-      return b.orderQty * b.product.cost - a.orderQty * a.product.cost;
-    });
-  const noPedir = metrics
-    .filter((m) => m.orderAction === "no_pedir" && (m.status === "exceso" || m.velocity === "muerta" || m.velocity === "baja"))
-    .sort((a, b) => b.stockValue - a.stockValue);
+  const groups = Object.fromEntries(ORDER.map((k) => [k, metrics.filter((m) => m.orderAction === k)])) as Record<
+    BuyClass,
+    typeof metrics
+  >;
+  const pedir = [...groups.comprar_ya, ...groups.comprar_pronto];
   const total = pedir.reduce((s, m) => s + m.orderQty * m.product.cost, 0);
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <Tile label="Líneas a pedir" value={String(pedir.length)} />
-        <Tile label="Costo del pedido" value={formatColon(total)} />
-        <Tile label="No reponer" value={String(noPedir.length)} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Tile label="Comprar ya" value={String(groups.comprar_ya.length)} />
+        <Tile label="Comprar pronto" value={String(groups.comprar_pronto.length)} />
+        <Tile label="Costo sugerido" value={formatColon(total)} />
+        <Tile label="No / descontinuar" value={String(groups.no_comprar.length + groups.descontinuar.length)} />
       </div>
 
-      <section>
-        <h2 className="mb-3 font-display text-2xl tracking-tight">Pedir</h2>
-        <ul className="divide-y divide-border overflow-hidden rounded-xl bg-surface shadow-[var(--shadow-border)]">
-          {pedir.map((m) => (
-            <li key={m.product.id} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{m.product.name}</p>
-                <p className="text-xs text-muted">{m.orderReason}</p>
-              </div>
-              <p className="text-sm tabular-nums">
-                {formatQty(m.orderQty, m.product.unit)}
-                <span className="ml-2 text-muted">{formatColon(m.orderQty * m.product.cost)}</span>
-              </p>
-              <StatusBadge status={m.status} />
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h2 className="mb-3 font-display text-2xl tracking-tight">No pedir</h2>
-        <ul className="divide-y divide-border overflow-hidden rounded-xl bg-surface shadow-[var(--shadow-border)]">
-          {noPedir.map((m) => (
-            <li key={m.product.id} className="px-4 py-3">
-              <p className="text-sm font-medium">{m.product.name}</p>
-              <p className="text-xs text-muted">{m.orderReason}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {ORDER.map((k) => (
+        <section key={k}>
+          <h2 className="mb-3 font-display text-2xl tracking-tight">{BUY_LABEL[k]}</h2>
+          <ul className="divide-y divide-border overflow-hidden rounded-xl bg-surface shadow-[var(--shadow-border)]">
+            {groups[k].length === 0 ? (
+              <li className="px-4 py-3 text-sm text-muted">Nada en esta clase.</li>
+            ) : (
+              groups[k].map((m) => (
+                <li key={m.product.id} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{m.product.name}</p>
+                    <p className="text-xs text-muted">{m.orderReason}</p>
+                  </div>
+                  {m.orderQty > 0 ? (
+                    <p className="text-sm tabular-nums">
+                      {formatQty(m.orderQty, m.product.unit)}
+                      <span className="ml-2 text-muted">{formatColon(m.orderQty * m.product.cost)}</span>
+                    </p>
+                  ) : null}
+                  <BuyBadge clasificacion={m.orderAction} />
+                  <StatusBadge status={m.status} />
+                </li>
+              ))
+            )}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }

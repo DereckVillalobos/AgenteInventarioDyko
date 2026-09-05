@@ -11,7 +11,7 @@ function PromosPage() {
   return (
     <AppShell
       title="Promociones"
-      subtitle="Descuentos sugeridos por lote que vence o por rotación que no se mueve."
+      subtitle="Descuento máximo que preserva el margen mínimo (25%). Pérdida controlada solo si vence de inmediato — requiere tu aprobación."
     >
       <PageGate>
         <PromoBoard />
@@ -25,7 +25,7 @@ function PromoBoard() {
   const rows = metrics
     .filter((m) => m.promo)
     .sort((a, b) => {
-      const rank = { alta: 0, media: 1, baja: 2 } as const;
+      const rank = { critico: 0, alerta: 1, vigilar: 2 } as const;
       return rank[a.promo!.urgency] - rank[b.promo!.urgency];
     });
 
@@ -40,18 +40,26 @@ function PromoBoard() {
               <div>
                 <h2 className="font-display text-2xl tracking-tight">{m.product.name}</h2>
                 <p className="text-xs text-muted">
-                  {m.product.sku} · {formatQty(m.product.stock, m.product.unit)}
+                  {m.product.sku} · {formatQty(m.product.stock, m.product.unit)} · {promo.tipo}
                 </p>
               </div>
-              <Badge tone={promo.urgency === "alta" ? "danger" : promo.urgency === "media" ? "warn" : "neutral"}>
+              <Badge tone={promo.urgency === "critico" ? "danger" : promo.urgency === "alerta" ? "warn" : "neutral"}>
                 {promo.urgency}
               </Badge>
             </div>
             <p className="mt-4 font-display text-4xl tracking-tight">−{promo.discount}%</p>
             <p className="mt-1 text-sm tabular-nums text-muted">
-              {formatColon(m.product.price)} → {formatColon(next)}
+              {formatColon(m.product.price)} → {formatColon(next)} · margen {promo.margen_resultante_pct}%
             </p>
-            <p className="mt-3 text-sm">{promo.reason}</p>
+            {promo.perdida_controlada ? (
+              <p className="mt-2 text-xs text-danger">Pérdida controlada por vencimiento. Aprobación requerida.</p>
+            ) : (
+              <p className="mt-2 text-xs text-muted">Máx. que preserva margen: {promo.descuento_maximo_pct}%</p>
+            )}
+            {promo.bundleName ? (
+              <p className="mt-2 text-xs text-muted">Bundle sugerido: {promo.bundleName}</p>
+            ) : null}
+            <p className="mt-3 text-sm">{promo.justificacion}</p>
           </article>
         );
       })}

@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-import { STATUS_LABEL, VELOCITY_LABEL } from "@/lib/inventory/format";
-import type { AbcClass, HealthStatus, Velocity } from "@/lib/inventory/types";
+import { BUY_LABEL, STATUS_LABEL, VELOCITY_LABEL } from "@/lib/inventory/format";
+import type { AbcClass, BuyClass, HealthStatus, Velocity } from "@/lib/inventory/types";
 
 const STATUS_TONE: Record<HealthStatus, "neutral" | "ok" | "warn" | "danger" | "info"> = {
   agotado: "danger",
@@ -10,6 +10,14 @@ const STATUS_TONE: Record<HealthStatus, "neutral" | "ok" | "warn" | "danger" | "
   exceso: "info",
   vence: "warn",
   vencido: "danger",
+};
+
+const BUY_TONE: Record<BuyClass, "neutral" | "ok" | "warn" | "danger" | "info" | "ink"> = {
+  comprar_ya: "danger",
+  comprar_pronto: "warn",
+  no_comprar: "neutral",
+  descontinuar: "info",
+  vigilar: "ok",
 };
 
 export function StatusBadge({ status }: { status: HealthStatus }) {
@@ -30,4 +38,8 @@ export function VelocityBadge({ velocity }: { velocity: Velocity }) {
       {VELOCITY_LABEL[velocity]}
     </Badge>
   );
+}
+
+export function BuyBadge({ clasificacion }: { clasificacion: BuyClass }) {
+  return <Badge tone={BUY_TONE[clasificacion]}>{BUY_LABEL[clasificacion]}</Badge>;
 }
