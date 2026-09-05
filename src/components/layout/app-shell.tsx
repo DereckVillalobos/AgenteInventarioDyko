@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Package,
   Percent,
+  ScanLine,
   X,
 } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
@@ -24,7 +25,14 @@ const NAV = [
   { to: "/rotacion", label: "Rotación", icon: ArrowUpDown },
   { to: "/compras", label: "Compras", icon: ClipboardList },
   { to: "/promociones", label: "Promos", icon: Percent },
+  { to: "/merma", label: "Merma", icon: ScanLine },
 ] as const;
+
+function navLabel(label: (typeof NAV)[number]["label"]) {
+  if (label === "Vence") return "Vencimientos";
+  if (label === "Promos") return "Promociones";
+  return label;
+}
 
 function LogoMark() {
   return (
@@ -83,7 +91,7 @@ export function AppShell({
                   )}
                 >
                   <Icon className="size-4" />
-                  {item.label === "Vence" ? "Vencimientos" : item.label === "Promos" ? "Promociones" : item.label}
+                  {navLabel(item.label)}
                 </Link>
               );
             })}
@@ -124,7 +132,7 @@ export function AppShell({
             >
               <div className="flex items-center gap-2 border-b border-border px-4 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">InventarioIA</p>
+                  <p className="text-sm font-medium">Dyko Intelligence</p>
                   <p className="text-xs text-muted">Recomienda · tú apruebas</p>
                 </div>
                 <Button
@@ -142,7 +150,7 @@ export function AppShell({
           </div>
         </div>
 
-        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
           {NAV.map((item) => {
             const active = pathname === item.to;
             const Icon = item.icon;
