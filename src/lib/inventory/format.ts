@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import type { AbcClass, HealthStatus, Velocity } from "./types";
+import type { AbcClass, BuyClass, ExpiryNivel, HealthStatus, Trend, Velocity } from "./types";
+
 
 export function todayLocalIso(d = new Date()): string {
   const y = d.getFullYear();
@@ -66,4 +67,25 @@ export const ABC_LABEL: Record<AbcClass, string> = {
   A: "A · alta rotación",
   B: "B · media",
   C: "C · lenta",
+};
+
+export const BUY_LABEL: Record<BuyClass, string> = {
+  comprar_ya: "Comprar ya",
+  comprar_pronto: "Comprar pronto",
+  no_comprar: "No comprar",
+  descontinuar: "Descontinuar",
+  vigilar: "Vigilar",
+};
+
+export const EXPIRY_LABEL: Record<ExpiryNivel, string> = {
+  critico: "Crítico ≤7 d",
+  alerta: "Alerta ≤30 d",
+  vigilar: "Vigilar ≤60 d",
+};
+
+export const TREND_LABEL: Record<Trend, string> = {
+  sube: "Sube (3 periodos)",
+  estable: "Estable",
+  baja: "Baja (3 periodos)",
+  sin_dato: "Sin dato de tendencia",
 };

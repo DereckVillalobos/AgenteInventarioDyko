@@ -18,11 +18,11 @@ type AgentState = {
 };
 
 export const SUGGESTIONS = [
-  "¿Qué está en riesgo de quiebre de stock?",
-  "¿Qué vence en los próximos 14 días?",
-  "¿Qué debo pedir esta semana y qué no?",
-  "¿A cuáles productos conviene promoción?",
-  "Dame el stock saludable por categoría",
+  "Reporte de salud de inventario (JSON + resumen)",
+  "¿Qué está en quiebre inminente?",
+  "Vencimientos críticos (≤7 días) y alerta (≤30)",
+  "Qué comprar ya, qué no comprar y qué descontinuar",
+  "Promociones que respeten el margen mínimo 25%",
 ];
 
 export const useAgent = create<AgentState>((set) => ({

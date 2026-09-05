@@ -1,13 +1,17 @@
 import { create } from "zustand";
-import { analyzeCatalog, briefing, buildAlerts, kpis, toSnapshot } from "./analytics";
+import { analyzeCatalog, briefing, buildAlerts, buildReport, kpis, toSnapshot } from "./analytics";
 import { buildCatalog } from "./seed";
-import type { CatalogSnapshot, Product } from "./types";
+import type { AgentMode, CatalogSnapshot, InventoryReport, Product } from "./types";
+import { DEFAULT_PARAMS } from "./types";
+
 
 type InventoryState = {
   ready: boolean;
   products: Product[];
+  mode: AgentMode;
   init: () => void;
   reset: () => void;
+  setMode: (mode: AgentMode) => void;
   adjustStock: (id: string, delta: number) => void;
   setStock: (id: string, qty: number) => void;
 };
@@ -41,11 +45,13 @@ function withStock(p: Product, next: number): Product {
 export const useInventory = create<InventoryState>((set, get) => ({
   ready: false,
   products: [],
+  mode: "cuidadoso",
   init: () => {
     if (get().ready) return;
     set({ ready: true, products: buildCatalog() });
   },
   reset: () => set({ ready: true, products: buildCatalog() }),
+  setMode: (mode) => set({ mode }),
   adjustStock: (id, delta) =>
     set({
       products: get().products.map((p) => (p.id === id ? withStock(p, p.stock + delta) : p)),
@@ -59,14 +65,19 @@ export const useInventory = create<InventoryState>((set, get) => ({
 export function useAnalysis() {
   const products = useInventory((s) => s.products);
   const ready = useInventory((s) => s.ready);
+  const mode = useInventory((s) => s.mode);
   const metrics = ready ? analyzeCatalog(products) : [];
+  const report: InventoryReport | null = ready ? buildReport(metrics, mode) : null;
   return {
     ready,
     products,
     metrics,
+    mode,
+    params: DEFAULT_PARAMS,
     alerts: ready ? buildAlerts(metrics) : [],
     kpis: ready ? kpis(metrics) : null,
     briefing: ready ? briefing(metrics) : [],
     snapshot: ready ? products.map(toSnapshot) : ([] as CatalogSnapshot[]),
+    report,
   };
 }

@@ -1,51 +1,67 @@
-# AgenteInventarioDyko
+# AgenteInventarioDyko · InventarioIA
 
-Módulo de inventario para **Dyko**: stock, vencimientos (FEFO), rotación ABC, plan de compras y promociones, con el agente **DARA** (Grok + herramientas).
+Agente de inventario para **Dyko Intelligence**. Analista senior de rotación, margen, vencimientos y compras.
 
-Repo **privado**. Moneda: colones (CRC). UI en español.
+**No ejecuta nada.** No emite órdenes de compra ni aplica descuentos. Propone; el humano aprueba.
 
-## Qué copiar a Dyko
+Repo **privado**. Moneda: colones (CRC). Idioma: español.
 
-El cerebro no depende de la UI. Empieza por estos archivos:
+Demo: bodega Puntarenas. El motor es agnóstico al vertical (bodega, 3 Regalos, librería): solo necesita el `CatalogSnapshot`.
 
-| Pieza | Ruta | Qué hace |
+## Qué hace
+
+1. Detecta el 100% de SKU fuera de banda (quiebre inminente o sobre-stock).
+2. Vencimientos **crítico ≤7 / alerta ≤30 / vigilar ≤60** (configurable en `DEFAULT_PARAMS`) con descuento, bundle o liquidación que respeta **margen mínimo 25%**, salvo pérdida controlada justificada.
+3. Sugerencia de compra: `cantidad = rotación diaria × (lead time + stock de seguridad) − stock actual`.
+4. Clasifica cada SKU: `comprar_ya` | `comprar_pronto` | `no_comprar` | `descontinuar` | `vigilar`.
+5. Entrega **JSON para Dyko** + resumen en lenguaje natural (<5 s de lectura).
+
+## Modos
+
+| Modo | Uso | Comportamiento |
 |---|---|---|
-| Tipos | `src/lib/inventory/types.ts` | Producto, lote, categoría, estados |
-| Motor | `src/lib/inventory/analytics.ts` | Stock saludable, ABC, pedir / no pedir, promos, alertas |
-| Fechas / ₡ | `src/lib/inventory/format.ts` | Formato CR |
-| Demo | `src/lib/inventory/seed.ts` | Catálogo de ejemplo (cámbialo por el de Dyko) |
-| Estado | `src/lib/inventory/store.ts` | Zustand en memoria |
-| Agente | `src/lib/agent/ask.ts` | DARA: tools + Grok (`grok-4.5`) |
-| Chat | `src/components/agent/agent-panel.tsx` | Panel del agente |
+| `rapido` | Corrida diaria | Solo quiebre inminente y vencimiento ≤7 d |
+| `cuidadoso` | Revisión semanal (default) | Reporte completo |
+| `verificado` | Compra grande | Compara ventanas 30 d vs 90 d (self-consistency) |
 
-Pantallas: `src/routes/inventario.tsx`, `vencimientos.tsx`, `rotacion.tsx`, `compras.tsx`, `promociones.tsx`, `index.tsx`.
+## Implantar en Dyko
 
-## Cómo implantarlo en Dyko
+1. Mapea productos, lotes FEFO, ventas 90 días (y si puedes, 30+30 anteriores) y lead time a `CatalogSnapshot` (`src/lib/inventory/types.ts`).
+2. `analyzeCatalog` / `analyzeSnapshots` calculan métricas **sin IA** — deterministas, auditables.
+3. `buildReport(metrics, modo)` produce el JSON del esquema Dyko.
+4. `askInventoryAgent` es InventarioIA: llama tools sobre ese snapshot. Copia el `handler` de `src/lib/agent/ask.ts` a tu API. `XAI_API_KEY` solo en servidor.
 
-1. **Conecta el inventario real**  
-   Sustituye `buildCatalog()` por lecturas de tu base (productos, lotes, ventas 90 días).  
-   El agente no lee la base directo: recibe un `CatalogSnapshot[]` (SKU, stock, lotes, ventas 7/30/90).  
-   Mapea tus tablas a ese snapshot y DARA sigue igual.
+Si falta un dato crítico (lotes, ventas, lead time, conteo físico), el reporte lo declara en `datos_faltantes_o_incertidumbre`. **Nunca se inventa.**
 
-2. **Motor de reglas (sin IA)**  
-   `analyzeCatalog(products)` ya calcula:
-   - stock objetivo
-   - cobertura en días
-   - clase ABC y velocidad
-   - **pedir / urgente / no pedir**
-   - **promoción** (vence o rotación muerta)
+## Archivos clave
 
-3. **DARA (IA)**  
-   En el servidor, con `XAI_API_KEY` (nunca en el cliente):
-   - `askInventoryAgent({ messages, catalog })`
-   - Tools: `overview`, `list_products`, `product_detail`, `expiries`, `purchase_plan`, `promo_plan`, `healthy_stock`
-   Si Dyko no usa TanStack Start, copia el `handler` de `ask.ts` a tu API (Express, Nest, Laravel, etc.) y deja el `fetch` a `https://api.x.ai/v1/chat/completions`.
+| Pieza | Ruta |
+|---|---|
+| Tipos, params, JSON | `src/lib/inventory/types.ts` |
+| Motor (rotación, FEFO, margen, clasificación) | `src/lib/inventory/analytics.ts` |
+| Tests de contrato | `src/lib/inventory/analytics.test.ts` |
+| Agente + tools | `src/lib/agent/ask.ts` |
+| Panel | `src/components/agent/agent-panel.tsx` |
+| Contrato de salida | `SPEC.md` |
 
-4. **UI**  
-   React 19 + Tailwind v4 + Radix. Si Dyko ya tiene design system, reusa solo el motor y el agente; las pantallas son referencia.
+## Reglas de negocio (no negociables)
 
-## Dependencias
+- Cantidad sugerida = `ceil(rotación_diaria × (lead + seguridad)) − stock`, acotada a `maxStock`.
+- Quiebre inminente: días de cobertura < lead time del proveedor → `comprar_ya`.
+- Sobre-stock: cobertura > 90 días → `no_comprar`.
+- FEFO: si el lote a vencer cubre la demanda, `no_comprar`.
+- Descuento máximo que preserva margen: `floor((1 − (costo / ((1 − margenMin) × precio))) × 100)`.
+- Pérdida controlada **solo** por vencimiento inminente, marcada y con justificación.
+- Cada línea trae el *porqué* (dato que la disparó).
 
-`zustand`, `lucide-react`, `date-fns`, `recharts`, `@tanstack/react-router`, `@tanstack/react-start`, `tailwindcss`, Radix (dialog, tooltip, separator, scroll-area), `class-variance-authority`, `clsx`, `tailwind-merge`.
+## Datos que el agente no asume
 
-El agente **no** llama a la API al cargar la página: solo cuando el usuario pregunta.
+Conteo físico (merma), historial real de proveedor/lead time observado, estacionalidad histórica de Dyko, lotes en perecederos, ventas en 90 días.
+
+El calendario CR (Madre, Independencia, Navidad, regreso a clases) se anota como contexto; **no infla cantidades**.
+
+## Roadmap (no incluido en este módulo)
+
+Mermas vs conteo físico, canasta, precio por elasticidad, forecast estacional, simulador de caja/bodega, alertas de proveedor.
+
+Esos agentes hermanos van **después**. Este módulo es el agente base.
