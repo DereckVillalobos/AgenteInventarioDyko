@@ -3,14 +3,19 @@ import { analyzeSnapshots, briefing, buildAlerts, buildReport, kpis } from "@/li
 import type { AgentMode, CatalogSnapshot, ProductMetrics } from "@/lib/inventory/types";
 import { CATEGORY_LABEL, DEFAULT_PARAMS } from "@/lib/inventory/types";
 import { formatColon, formatQty, todayLocalIso } from "@/lib/inventory/format";
+import { analyzeShrinkage, buildShrinkageReport, shrinkageKpis } from "@/lib/shrinkage/analytics";
+import type { PhysicalCount } from "@/lib/shrinkage/types";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 export type ToolTrace = { name: string; summary: string };
+export type AgentDomain = "inventario" | "merma";
 
 type AskInput = {
   messages: ChatTurn[];
   catalog: CatalogSnapshot[];
   mode?: AgentMode;
+  domain?: AgentDomain;
+  counts?: PhysicalCount[];
 };
 
 const TOOLS = [
@@ -19,7 +24,7 @@ const TOOLS = [
     function: {
       name: "reporte_inventario",
       description:
-        "Reporte JSON completo para Dyko: salud, vencimientos 7/30/60, sugerencias de compra (comprar_ya|comprar_pronto|no_comprar|descontinuar|vigilar) y datos faltantes. Úsalo primero.",
+        "Reporte JSON completo para Dyko: salud, vencimientos 7/30/60, sugerencias de compra (comprar_ya|comprar_pronto|no_comprar|descontinuar|vigilar) y datos faltantes. Úsalo primero en dominio inventario.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -27,7 +32,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "overview",
-      description: "KPIs, alertas y briefing breve.",
+      description: "KPIs, alertas y briefing breve de inventario.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -107,6 +112,52 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "reporte_merma",
+      description:
+        "Reporte JSON de MermaIA: cobertura de conteo, valor de merma/sobrante, discrepancias (posible_hurto|merma_operativa|error_probable_conteo|sobrante|sin_conteo). No ajusta stock. Úsalo primero en dominio merma.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "discrepancias",
+      description: "Lista líneas de merma filtradas por clasificación.",
+      parameters: {
+        type: "object",
+        properties: {
+          clasificacion: {
+            type: "string",
+            enum: [
+              "cuadrado",
+              "merma_operativa",
+              "posible_hurto",
+              "error_probable_conteo",
+              "sobrante",
+              "merma_no_clasificada",
+              "sin_conteo",
+            ],
+          },
+          limit: { type: "number" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "merma_detail",
+      description: "Detalle de merma de un SKU: teórico, físico, causa propuesta. Si no hay conteo, lo declara.",
+      parameters: {
+        type: "object",
+        properties: { sku: { type: "string" } },
+        required: ["sku"],
+      },
+    },
+  },
 ] as const;
 
 function compactMetric(m: ProductMetrics) {
@@ -148,12 +199,36 @@ function runTool(
   rawArgs: string,
   metrics: ProductMetrics[],
   mode: AgentMode,
+  counts: PhysicalCount[],
 ): { result: unknown; summary: string } {
   let args: Record<string, unknown> = {};
   try {
     args = rawArgs ? (JSON.parse(rawArgs) as Record<string, unknown>) : {};
   } catch {
     args = {};
+  }
+
+  const shrinkRows = analyzeShrinkage(metrics, counts);
+
+  if (name === "reporte_merma") {
+    const report = buildShrinkageReport(shrinkRows);
+    return { summary: `Merma ${report.cobertura_conteo.porcentaje}%`, result: report };
+  }
+
+  if (name === "discrepancias") {
+    const clasificacion = args.clasificacion as string | undefined;
+    const limit = Math.min(Number(args.limit ?? 20), 40);
+    const rows = shrinkRows.filter((r) => (clasificacion ? r.clasificacion === clasificacion : r.clasificacion !== "cuadrado"));
+    return { summary: `${rows.length} líneas`, result: rows.slice(0, limit) };
+  }
+
+  if (name === "merma_detail") {
+    const sku = String(args.sku ?? "").toLowerCase();
+    const row =
+      shrinkRows.find((x) => x.sku.toLowerCase() === sku) ??
+      shrinkRows.find((x) => x.producto.toLowerCase().includes(sku));
+    if (!row) return { summary: "No encontrado", result: { error: "SKU no encontrado", dato_faltante: true } };
+    return { summary: row.sku, result: row };
   }
 
   if (name === "reporte_inventario") {
@@ -164,6 +239,7 @@ function runTool(
   if (name === "overview") {
     const stats = kpis(metrics);
     const alerts = buildAlerts(metrics).slice(0, 12);
+    const sk = shrinkageKpis(shrinkRows);
     return {
       summary: "Resumen general",
       result: {
@@ -174,6 +250,12 @@ function runTool(
           ...stats,
           stockValue: formatColon(stats.stockValue),
           orderValue: formatColon(stats.orderValue),
+        },
+        merma: {
+          cobertura: `${sk.coveragePct}%`,
+          valorMerma: formatColon(sk.valorMerma),
+          hurto: sk.hurto,
+          sinConteo: sk.sinConteo,
         },
         briefing: briefing(metrics),
         alerts,
@@ -216,6 +298,7 @@ function runTool(
       metrics.find((x) => x.product.sku.toLowerCase() === sku) ??
       metrics.find((x) => x.product.name.toLowerCase().includes(sku));
     if (!m) return { summary: "No encontrado", result: { error: "SKU no encontrado", dato_faltante: true } };
+    const shrink = shrinkRows.find((r) => r.sku === m.product.sku);
     return {
       summary: m.product.sku,
       result: {
@@ -226,6 +309,7 @@ function runTool(
         sales30Prev: m.sales30Prev,
         sales30Old: m.sales30Old,
         sales90: m.sales90,
+        merma: shrink ?? { dato_faltante: true },
       },
     };
   }
@@ -359,23 +443,22 @@ async function complete(apiKey: string, messages: OaiMessage[]) {
   };
 }
 
-export const askInventoryAgent = createServerFn({ method: "POST" })
-  .validator((input: AskInput) => input)
-  .handler(async ({ data }) => {
-    const apiKey = process.env.XAI_API_KEY;
-    if (!apiKey) {
-      return {
-        ok: false as const,
-        error: "El agente no está disponible en este entorno.",
-      };
-    }
+function systemPrompt(today: string, mode: AgentMode, domain: AgentDomain, minM: number) {
+  const merma = `Eres MermaIA, agente hermano de InventarioIA en Dyko Intelligence (Puntarenas, Costa Rica).
+Hoy es ${today}. Moneda: colones (CRC).
+Hablas español, claro y operativo. Sin emojis.
 
-    const mode: AgentMode = data.mode ?? "cuidadoso";
-    const metrics = analyzeSnapshots(data.catalog.slice(0, 80));
-    const today = todayLocalIso();
-    const minM = Math.round(DEFAULT_PARAMS.margenMinimo * 100);
+No ejecutas nada: no ajustas el teórico, no das de baja, no acusas. Solo propones; el humano aprueba.
 
-    const system = `Eres InventarioIA, analista senior de inventario de Dyko Intelligence (Puntarenas, Costa Rica).
+Reglas:
+- Llama reporte_merma o discrepancias antes de afirmar cifras. No inventes conteos.
+- Si un SKU no tiene conteo físico, clasifícalo sin_conteo y decláralo. Nunca estimes la merma.
+- posible_hurto es hipótesis (faltante alto en no perecedero sin vencimiento). No es sentencia.
+- merma_operativa: perecedero / vencido. error_probable_conteo: 1 unidad de más o de menos en stock grande.
+- Respuesta: 3–5 líneas + SKU, diferencia, colones, acción a aprobar.
+- Cierra con 1–3 pasos de hoy.`;
+
+  const inv = `Eres InventarioIA, analista senior de inventario de Dyko Intelligence (Puntarenas, Costa Rica).
 Hoy es ${today}. Moneda: colones (CRC). Modo: ${mode}.
 Margen mínimo aceptable: ${minM}%. Ventanas de vencimiento: crítico ≤7 d, alerta ≤30 d, vigilar ≤60 d.
 Hablas español, claro y operativo. Sin emojis.
@@ -394,15 +477,40 @@ Reglas:
 - Modo rápido: solo quiebre inminente y vencimiento ≤7 d.
 - Modo cuidadoso: reporte completo.
 - Modo verificado: compara ventanas 30 d vs 90 d y señala divergencias.
-- Respuesta al usuario: resumen 3–5 líneas + acciones concretas (SKU, cantidad, colones). El JSON lo consume Dyko vía herramienta reporte_inventario.
+- Merma/conteo físico es el agente hermano MermaIA (herramientas reporte_merma, discrepancias). No mezcles merma con la OC.
+- Respuesta al usuario: resumen 3–5 líneas + acciones concretas (SKU, cantidad, colones).
 - Cierra con 1–3 pasos que el administrador debe aprobar hoy.`;
+
+  return domain === "merma" ? merma : inv;
+}
+
+export const askInventoryAgent = createServerFn({ method: "POST" })
+  .validator((input: AskInput) => input)
+  .handler(async ({ data }) => {
+    const apiKey = process.env.XAI_API_KEY;
+    if (!apiKey) {
+      return {
+        ok: false as const,
+        error: "El agente no está disponible en este entorno.",
+      };
+    }
+
+    const mode: AgentMode = data.mode ?? "cuidadoso";
+    const domain: AgentDomain = data.domain ?? "inventario";
+    const counts = data.counts ?? [];
+    const metrics = analyzeSnapshots(data.catalog.slice(0, 80));
+    const today = todayLocalIso();
+    const minM = Math.round(DEFAULT_PARAMS.margenMinimo * 100);
 
     const history = data.messages.slice(-10).map((m) => ({
       role: m.role,
       content: m.content,
     })) as OaiMessage[];
 
-    const messages: OaiMessage[] = [{ role: "system", content: system }, ...history];
+    const messages: OaiMessage[] = [
+      { role: "system", content: systemPrompt(today, mode, domain, minM) },
+      ...history,
+    ];
     const traces: ToolTrace[] = [];
 
     try {
@@ -427,7 +535,7 @@ Reglas:
           tool_calls: calls,
         });
         for (const call of calls) {
-          const ran = runTool(call.function.name, call.function.arguments, metrics, mode);
+          const ran = runTool(call.function.name, call.function.arguments, metrics, mode, counts);
           traces.push({ name: call.function.name, summary: ran.summary });
           messages.push({
             role: "tool",
