@@ -3,8 +3,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { askInventoryAgent, type ChatTurn } from "@/lib/agent/ask";
 import { SUGGESTIONS, useAgent } from "@/lib/agent/store";
-import type { CatalogSnapshot } from "@/lib/inventory/types";
-import { useAnalysis } from "@/lib/inventory/store";
+import type { AgentMode, CatalogSnapshot } from "@/lib/inventory/types";
+import { useAnalysis, useInventory } from "@/lib/inventory/store";
 import { cn } from "@/lib/utils";
 
 function uid() {
@@ -28,7 +28,7 @@ function RichText({ text }: { text: string }) {
   );
 }
 
-export async function sendToAgent(text: string, snapshot: CatalogSnapshot[]) {
+export async function sendToAgent(text: string, snapshot: CatalogSnapshot[], mode: AgentMode = "cuidadoso") {
   const trimmed = text.trim();
   if (!trimmed) return;
   const { busy, push, setBusy, setOpen } = useAgent.getState();
@@ -42,7 +42,7 @@ export async function sendToAgent(text: string, snapshot: CatalogSnapshot[]) {
       .messages.filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }));
     const result = await askInventoryAgent({
-      data: { messages: history, catalog: snapshot },
+      data: { messages: history, catalog: snapshot, mode },
     });
     if (result.ok) {
       push({ id: uid(), role: "assistant", content: result.text, traces: result.traces });
@@ -69,17 +69,39 @@ export async function sendToAgent(text: string, snapshot: CatalogSnapshot[]) {
 export function AgentBody() {
   const messages = useAgent((s) => s.messages);
   const busy = useAgent((s) => s.busy);
-  const { snapshot } = useAnalysis();
+  const { snapshot, mode } = useAnalysis();
+  const setMode = useInventory((s) => s.setMode);
   const [draft, setDraft] = useState("");
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="flex gap-1 border-b border-border px-3 py-2">
+        {(
+          [
+            ["rapido", "Rápido"],
+            ["cuidadoso", "Cuidadoso"],
+            ["verificado", "Verificado"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setMode(id)}
+            className={cn(
+              "h-8 rounded-sm px-2 text-[11px] font-medium",
+              mode === id ? "bg-accent text-accent-fg" : "text-muted hover:bg-bg-warm",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {messages.length === 0 ? (
           <div className="flex flex-col gap-4">
             <p className="text-sm text-muted">
-              Soy DARA, el agente de inventario de Dyko. Consulto existencias, vencimientos,
-              rotación y te digo qué pedir, qué no pedir y qué promocionar.
+              Soy InventarioIA. Recomiendo compras, vencimientos y rotación. No ejecuto órdenes ni
+              descuentos: tú apruebas.
             </p>
             <div className="flex flex-col gap-2">
               {SUGGESTIONS.map((s) => (
@@ -87,7 +109,7 @@ export function AgentBody() {
                   key={s}
                   type="button"
                   className="rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm text-fg hover:bg-bg-warm"
-                  onClick={() => sendToAgent(s, snapshot)}
+                  onClick={() => sendToAgent(s, snapshot, mode)}
                 >
                   {s}
                 </button>
@@ -135,14 +157,14 @@ export function AgentBody() {
           e.preventDefault();
           const value = draft;
           setDraft("");
-          void sendToAgent(value, snapshot);
+          void sendToAgent(value, snapshot, mode);
         }}
       >
         <div className="flex items-end gap-2">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Pregúntale a DARA…"
+            placeholder="Pregúntale a InventarioIA…"
             rows={2}
             className="min-h-11 flex-1 resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onKeyDown={(e) => {
@@ -150,7 +172,7 @@ export function AgentBody() {
                 e.preventDefault();
                 const value = draft;
                 setDraft("");
-                void sendToAgent(value, snapshot);
+                void sendToAgent(value, snapshot, mode);
               }
             }}
           />
@@ -170,7 +192,7 @@ export function AgentFab() {
       className="fixed right-3 bottom-[4.75rem] z-40 size-12 rounded-full shadow-[var(--shadow-border)] xl:hidden"
       size="icon"
       onClick={toggle}
-      aria-label="Abrir agente DARA"
+      aria-label="Abrir InventarioIA"
     >
       <Bot className="size-5" />
     </Button>

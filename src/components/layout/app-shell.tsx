@@ -124,8 +124,8 @@ export function AppShell({
             >
               <div className="flex items-center gap-2 border-b border-border px-4 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">DARA</p>
-                  <p className="text-xs text-muted">Agente de inventario</p>
+                  <p className="text-sm font-medium">InventarioIA</p>
+                  <p className="text-xs text-muted">Recomienda · tú apruebas</p>
                 </div>
                 <Button
                   variant="ghost"
