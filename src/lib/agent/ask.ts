@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { analyzeSnapshots, briefing, buildAlerts, kpis } from "@/lib/inventory/analytics";
-import type { CatalogSnapshot, ProductMetrics } from "@/lib/inventory/types";
-import { CATEGORY_LABEL } from "@/lib/inventory/types";
+import { analyzeSnapshots, briefing, buildAlerts, buildReport, kpis } from "@/lib/inventory/analytics";
+import type { AgentMode, CatalogSnapshot, ProductMetrics } from "@/lib/inventory/types";
+import { CATEGORY_LABEL, DEFAULT_PARAMS } from "@/lib/inventory/types";
 import { formatColon, formatQty, todayLocalIso } from "@/lib/inventory/format";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
@@ -10,15 +10,24 @@ export type ToolTrace = { name: string; summary: string };
 type AskInput = {
   messages: ChatTurn[];
   catalog: CatalogSnapshot[];
+  mode?: AgentMode;
 };
 
 const TOOLS = [
   {
     type: "function",
     function: {
-      name: "overview",
+      name: "reporte_inventario",
       description:
-        "Resumen del inventario: KPIs, alertas y briefing. Úsalo primero para situarte.",
+        "Reporte JSON completo para Dyko: salud, vencimientos 7/30/60, sugerencias de compra (comprar_ya|comprar_pronto|no_comprar|descontinuar|vigilar) y datos faltantes. Úsalo primero.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "overview",
+      description: "KPIs, alertas y briefing breve.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -26,15 +35,18 @@ const TOOLS = [
     type: "function",
     function: {
       name: "list_products",
-      description:
-        "Lista SKU filtrados por estado, categoría, rotación ABC, velocidad o texto.",
+      description: "Lista SKU filtrados por estado, categoría, ABC, velocidad, clasificación de compra o texto.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Nombre, marca o SKU" },
+          query: { type: "string" },
           status: {
             type: "string",
             enum: ["agotado", "critico", "bajo", "saludable", "exceso", "vence", "vencido"],
+          },
+          clasificacion: {
+            type: "string",
+            enum: ["comprar_ya", "comprar_pronto", "no_comprar", "descontinuar", "vigilar"],
           },
           category: { type: "string" },
           abc: { type: "string", enum: ["A", "B", "C"] },
@@ -48,7 +60,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "product_detail",
-      description: "Detalle de un SKU: stock, lotes, rotación, pedido y promoción.",
+      description: "Detalle de un SKU: stock, lotes, rotación, compra y promoción (con margen).",
       parameters: {
         type: "object",
         properties: { sku: { type: "string" } },
@@ -60,10 +72,10 @@ const TOOLS = [
     type: "function",
     function: {
       name: "expiries",
-      description: "Lotes vencidos o que vencen dentro de N días (FEFO).",
+      description: "Lotes vencidos o que vencen dentro de N días. Default 30 (alerta). Crítico=7, vigilar=60.",
       parameters: {
         type: "object",
-        properties: { days: { type: "number", description: "Ventana en días. Default 14." } },
+        properties: { days: { type: "number" } },
       },
     },
   },
@@ -71,7 +83,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "purchase_plan",
-      description: "Qué pedir, qué no pedir y por qué, con cantidades y costo.",
+      description: "Sugerencias de compra por clasificación, con cantidad y justificación numérica. No ejecuta OC.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -79,7 +91,8 @@ const TOOLS = [
     type: "function",
     function: {
       name: "promo_plan",
-      description: "Productos a promocionar por vencimiento o baja rotación.",
+      description:
+        "Promociones por vencimiento o rotación muerta. Incluye descuento máximo que preserva margen mínimo y si es pérdida controlada.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -109,19 +122,24 @@ function compactMetric(m: ProductMetrics) {
     max: p.maxStock,
     target: m.targetStock,
     avgDaily: Number(m.avgDaily.toFixed(2)),
+    rotacionMensual: m.rotacionMensual,
+    tendencia: m.tendencia,
     daysCover: m.daysCover === null ? null : Math.round(m.daysCover),
     abc: m.abc,
     velocity: m.velocity,
     status: m.status,
+    clasificacion: m.orderAction,
     expiry: m.nearestExpiry,
     daysToExpiry: m.daysToExpiry,
-    order: m.orderAction,
+    expiryNivel: m.expiryNivel,
     orderQty: m.orderQty,
     orderReason: m.orderReason,
     promo: m.promo,
     stockValue: Math.round(m.stockValue),
+    margenPct: Math.round(m.marginPct * 100),
     cost: p.cost,
     price: p.price,
+    datosFaltantes: m.datosFaltantes,
   };
 }
 
@@ -129,12 +147,18 @@ function runTool(
   name: string,
   rawArgs: string,
   metrics: ProductMetrics[],
+  mode: AgentMode,
 ): { result: unknown; summary: string } {
   let args: Record<string, unknown> = {};
   try {
     args = rawArgs ? (JSON.parse(rawArgs) as Record<string, unknown>) : {};
   } catch {
     args = {};
+  }
+
+  if (name === "reporte_inventario") {
+    const report = buildReport(metrics, mode);
+    return { summary: `Reporte ${mode}`, result: report };
   }
 
   if (name === "overview") {
@@ -144,6 +168,8 @@ function runTool(
       summary: "Resumen general",
       result: {
         today: todayLocalIso(),
+        modo: mode,
+        margenMinimo: `${Math.round(DEFAULT_PARAMS.margenMinimo * 100)}%`,
         kpis: {
           ...stats,
           stockValue: formatColon(stats.stockValue),
@@ -158,6 +184,7 @@ function runTool(
   if (name === "list_products") {
     const query = String(args.query ?? "").toLowerCase();
     const status = args.status as string | undefined;
+    const clasificacion = args.clasificacion as string | undefined;
     const category = args.category as string | undefined;
     const abc = args.abc as string | undefined;
     const velocity = args.velocity as string | undefined;
@@ -165,6 +192,7 @@ function runTool(
     const rows = metrics.filter((m) => {
       const p = m.product;
       if (status && m.status !== status) return false;
+      if (clasificacion && m.orderAction !== clasificacion) return false;
       if (
         category &&
         p.category !== category &&
@@ -187,7 +215,7 @@ function runTool(
     const m =
       metrics.find((x) => x.product.sku.toLowerCase() === sku) ??
       metrics.find((x) => x.product.name.toLowerCase().includes(sku));
-    if (!m) return { summary: "No encontrado", result: { error: "SKU no encontrado" } };
+    if (!m) return { summary: "No encontrado", result: { error: "SKU no encontrado", dato_faltante: true } };
     return {
       summary: m.product.sku,
       result: {
@@ -195,13 +223,15 @@ function runTool(
         lots: m.product.lots,
         sales7: m.sales7,
         sales30: m.sales30,
+        sales30Prev: m.sales30Prev,
+        sales30Old: m.sales30Old,
         sales90: m.sales90,
       },
     };
   }
 
   if (name === "expiries") {
-    const days = Number(args.days ?? 14);
+    const days = Number(args.days ?? DEFAULT_PARAMS.vencimientoAlertaDias);
     const rows = metrics
       .filter((m) => m.expiredQty > 0 || (m.daysToExpiry !== null && m.daysToExpiry <= days))
       .sort((a, b) => (a.daysToExpiry ?? -99) - (b.daysToExpiry ?? -99))
@@ -209,50 +239,49 @@ function runTool(
         ...compactMetric(m),
         lots: m.product.lots,
         expiredQty: m.expiredQty,
-        expiring14Qty: m.expiring14Qty,
+        expiring7Qty: m.expiring7Qty,
+        expiring30Qty: m.expiring30Qty,
+        expiring60Qty: m.expiring60Qty,
       }));
     return { summary: `${rows.length} con vencimiento`, result: rows };
   }
 
   if (name === "purchase_plan") {
-    const pedir = metrics
-      .filter((m) => m.orderAction !== "no_pedir")
-      .sort((a, b) => {
-        if (a.orderAction !== b.orderAction) return a.orderAction === "urgente" ? -1 : 1;
-        return b.orderQty * b.product.cost - a.orderQty * a.product.cost;
-      })
-      .map((m) => ({
-        ...compactMetric(m),
-        lineCost: m.orderQty * m.product.cost,
-      }));
-    const noPedir = metrics
-      .filter(
-        (m) =>
-          m.orderAction === "no_pedir" && (m.status === "exceso" || m.velocity === "muerta" || m.promo),
-      )
-      .slice(0, 15)
-      .map((m) => compactMetric(m));
-    const total = pedir.reduce((s, r) => s + r.lineCost, 0);
+    const groups = {
+      comprar_ya: metrics.filter((m) => m.orderAction === "comprar_ya"),
+      comprar_pronto: metrics.filter((m) => m.orderAction === "comprar_pronto"),
+      no_comprar: metrics.filter((m) => m.orderAction === "no_comprar"),
+      descontinuar: metrics.filter((m) => m.orderAction === "descontinuar"),
+      vigilar: metrics.filter((m) => m.orderAction === "vigilar"),
+    };
+    const pedir = [...groups.comprar_ya, ...groups.comprar_pronto];
+    const total = pedir.reduce((s, m) => s + m.orderQty * m.product.cost, 0);
     return {
-      summary: `${pedir.length} líneas a pedir`,
+      summary: `${groups.comprar_ya.length} comprar_ya`,
       result: {
-        totalCosto: formatColon(total),
-        pedir,
-        noPedir,
+        nota: "Propuestas para aprobación humana. InventarioIA no emite órdenes de compra.",
+        totalCostoSugerido: formatColon(total),
+        comprar_ya: groups.comprar_ya.map((m) => ({ ...compactMetric(m), lineCost: m.orderQty * m.product.cost })),
+        comprar_pronto: groups.comprar_pronto.map((m) => ({
+          ...compactMetric(m),
+          lineCost: m.orderQty * m.product.cost,
+        })),
+        no_comprar: groups.no_comprar.slice(0, 12).map(compactMetric),
+        descontinuar: groups.descontinuar.map(compactMetric),
+        vigilar: groups.vigilar.slice(0, 8).map(compactMetric),
       },
     };
   }
 
   if (name === "promo_plan") {
+    const rank = { critico: 0, alerta: 1, vigilar: 2 };
     const rows = metrics
       .filter((m) => m.promo)
-      .sort((a, b) => {
-        const rank = { alta: 0, media: 1, baja: 2 };
-        return rank[a.promo!.urgency] - rank[b.promo!.urgency];
-      })
+      .sort((a, b) => rank[a.promo!.urgency] - rank[b.promo!.urgency])
       .map((m) => ({
         ...compactMetric(m),
         suggestedPrice: Math.round(m.product.price * (1 - m.promo!.discount / 100)),
+        margenMinimo: Math.round(DEFAULT_PARAMS.margenMinimo * 100),
       }));
     return { summary: `${rows.length} promociones`, result: rows };
   }
@@ -286,6 +315,7 @@ function runTool(
           target: formatQty(m.targetStock, m.product.unit),
           gap: m.product.stock - m.targetStock,
           status: m.status,
+          clasificacion: m.orderAction,
         })),
       },
     };
@@ -313,8 +343,8 @@ async function complete(apiKey: string, messages: OaiMessage[]) {
     },
     body: JSON.stringify({
       model: "grok-4.5",
-      temperature: 0.25,
-      max_tokens: 1400,
+      temperature: 0.2,
+      max_tokens: 1600,
       messages,
       tools: TOOLS,
       tool_choice: "auto",
@@ -340,20 +370,32 @@ export const askInventoryAgent = createServerFn({ method: "POST" })
       };
     }
 
+    const mode: AgentMode = data.mode ?? "cuidadoso";
     const metrics = analyzeSnapshots(data.catalog.slice(0, 80));
     const today = todayLocalIso();
+    const minM = Math.round(DEFAULT_PARAMS.margenMinimo * 100);
 
-    const system = `Eres DARA, el agente de inventario de Dyko (comercio en Puntarenas, Costa Rica).
-Hoy es ${today}. Moneda: colones costarricenses (CRC).
-Hablas español, claro y operativo. No uses emojis.
+    const system = `Eres InventarioIA, analista senior de inventario de Dyko Intelligence (Puntarenas, Costa Rica).
+Hoy es ${today}. Moneda: colones (CRC). Modo: ${mode}.
+Margen mínimo aceptable: ${minM}%. Ventanas de vencimiento: crítico ≤7 d, alerta ≤30 d, vigilar ≤60 d.
+Hablas español, claro y operativo. Sin emojis.
+
+No ejecutas nada: no emites órdenes de compra ni aplicas descuentos. Solo propones; el humano aprueba.
 
 Reglas:
-- Consulta SIEMPRE las herramientas antes de afirmar cifras. No inventes SKU, existencias ni fechas.
-- Sé concreto: SKU, cantidad, unidad, fecha, colones, acción (pedir / no pedir / promocionar / dar de baja).
-- Stock saludable = banda entre mínimo y el objetivo calculado por rotación y vida útil.
-- Prioriza FEFO en perecederos. No recomiendes pedir si hay lote por vencer que cubre la demanda.
-- Productos de rotación muerta o excesos: no pedir; sugerir promoción o discontinuación.
-- Si faltan datos, dilo. Máximo 8 viñetas o una tabla corta. Cierra con 1-3 acciones de hoy.`;
+- Llama herramientas antes de afirmar cifras. No inventes SKU, existencias, fechas ni porcentajes.
+- Si falta un dato, decláralo en "datos faltantes". Nunca rellenes con supuestos.
+- Clasificación de compra: comprar_ya | comprar_pronto | no_comprar | descontinuar | vigilar.
+- Cantidad sugerida = rotación diaria × (lead time + stock de seguridad) − stock actual.
+- Quiebre inminente: días de cobertura < lead time del proveedor.
+- Sobre-stock: cobertura > 90 días.
+- Descuento: nunca bajes el margen por debajo de ${minM}% salvo "pérdida controlada por vencimiento inminente" con justificación.
+- FEFO en perecederos. No pedir si el lote actual cubre la demanda.
+- Modo rápido: solo quiebre inminente y vencimiento ≤7 d.
+- Modo cuidadoso: reporte completo.
+- Modo verificado: compara ventanas 30 d vs 90 d y señala divergencias.
+- Respuesta al usuario: resumen 3–5 líneas + acciones concretas (SKU, cantidad, colones). El JSON lo consume Dyko vía herramienta reporte_inventario.
+- Cierra con 1–3 pasos que el administrador debe aprobar hoy.`;
 
     const history = data.messages.slice(-10).map((m) => ({
       role: m.role,
@@ -385,7 +427,7 @@ Reglas:
           tool_calls: calls,
         });
         for (const call of calls) {
-          const ran = runTool(call.function.name, call.function.arguments, metrics);
+          const ran = runTool(call.function.name, call.function.arguments, metrics, mode);
           traces.push({ name: call.function.name, summary: ran.summary });
           messages.push({
             role: "tool",
