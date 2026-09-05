@@ -11,10 +11,10 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { AgentBody, AgentFab } from "@/components/agent/agent-panel";
+import { SettingsSheet } from "@/components/inventory/settings-sheet";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAgent } from "@/lib/agent/store";
-import { BRANCH, COMPANY } from "@/lib/inventory/types";
 import { useInventory } from "@/lib/inventory/store";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +56,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const init = useInventory((s) => s.init);
+  const tenant = useInventory((s) => s.tenant);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const open = useAgent((s) => s.open);
   const setOpen = useAgent((s) => s.setOpen);
@@ -70,10 +71,11 @@ export function AppShell({
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-bg/90 px-4 backdrop-blur-sm">
           <Link to="/" className="flex items-center gap-2">
             <LogoMark />
-            <span className="font-display text-xl tracking-tight">{COMPANY}</span>
+            <span className="font-display text-xl tracking-tight">{tenant.company}</span>
             <span className="hidden text-sm text-muted sm:inline">Inventario</span>
           </Link>
-          <span className="ml-auto truncate text-xs text-muted">{BRANCH}</span>
+          <span className="ml-auto truncate text-xs text-muted">{tenant.branch}</span>
+          <SettingsSheet />
         </header>
 
         <div className="flex">
@@ -133,7 +135,7 @@ export function AppShell({
               <div className="flex items-center gap-2 border-b border-border px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">Dyko Intelligence</p>
-                  <p className="text-xs text-muted">Recomienda · tú apruebas</p>
+                  <p className="text-xs text-muted">{tenant.branch} · tú apruebas</p>
                 </div>
                 <Button
                   variant="ghost"
