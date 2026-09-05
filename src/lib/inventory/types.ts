@@ -26,6 +26,20 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   snacks: "Snacks",
 };
 
+/** Bundles only with same category or these pairs. Never yogurt + cuaderno. */
+export const COMPLEMENT_CATEGORIES: Record<Category, Category[]> = {
+  lacteos: ["panaderia", "abarrotes"],
+  abarrotes: ["bebidas", "snacks"],
+  frescos: ["carnes", "abarrotes"],
+  bebidas: ["snacks", "abarrotes"],
+  limpieza: ["cuidado"],
+  panaderia: ["lacteos", "abarrotes"],
+  carnes: ["frescos", "abarrotes"],
+  cuidado: ["limpieza"],
+  congelados: ["abarrotes"],
+  snacks: ["bebidas", "abarrotes"],
+};
+
 export type Lot = {
   id: string;
   qty: number;
@@ -112,12 +126,25 @@ export const DEFAULT_PARAMS: BusinessParams = {
   },
 };
 
+/** Hard cap of SKUs the agent analyzes per turn. Over this, we keep quiebres/vencimientos first and declare the rest. */
+export const AGENT_CATALOG_CAP = 400;
+
+export type Tenant = {
+  company: string;
+  branch: string;
+};
+
+export const DEFAULT_TENANT: Tenant = {
+  company: "Dyko",
+  branch: "Bodega Puntarenas",
+};
+
 export type ProductMetrics = {
   product: Product;
   sales7: number;
   sales30: number;
-  sales30Prev: number;
-  sales30Old: number;
+  sales30Prev: number | null;
+  sales30Old: number | null;
   sales90: number;
   avgDaily: number;
   rotacionMensual: number;
@@ -170,10 +197,18 @@ export type CatalogSnapshot = {
   lots: Lot[];
   sales7: number;
   sales30: number;
-  sales30Prev: number;
-  sales30Old: number;
+  /** null = Dyko no mandó la ventana. No tratar 0 como “estable”. */
+  sales30Prev: number | null;
+  sales30Old: number | null;
   sales90: number;
   avgDaily: number;
+};
+
+export type CatalogCoverage = {
+  total: number;
+  analyzed: number;
+  omitted: number;
+  note: string | null;
 };
 
 export type InventoryReport = {
@@ -185,6 +220,7 @@ export type InventoryReport = {
     en_quiebre: number;
     en_sobre_stock: number;
     total_skus_analizados: number;
+    total_skus_recibidos?: number;
   };
   alertas_vencimiento: Array<{
     sku: string;
@@ -214,6 +250,7 @@ export type InventoryReport = {
   proximos_pasos_para_el_usuario: string[];
 };
 
-export const BRANCH = "Bodega Puntarenas";
-export const COMPANY = "Dyko";
+/** Fallback literals. Prefer tenant from store (editable). */
+export const BRANCH = DEFAULT_TENANT.branch;
+export const COMPANY = DEFAULT_TENANT.company;
 export const AGENT_NAME = "InventarioIA";
