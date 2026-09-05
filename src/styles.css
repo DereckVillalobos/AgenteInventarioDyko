@@ -1,0 +1,101 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+
+  --color-bg: #f3f0e8;
+  --color-bg-warm: #e8e2d4;
+  --color-surface: #fbfaf6;
+  --color-surface-2: #f6f3ea;
+  --color-ink: #171614;
+  --color-fg: #171614;
+  --color-muted: #6b675f;
+  --color-subtle: #8a857a;
+  --color-border: #ddd6c8;
+  --color-border-strong: #c9c0ae;
+  --color-accent: #2f3f38;
+  --color-accent-fg: #f3f0e8;
+  --color-ok: #2f5d45;
+  --color-ok-soft: #dce8e1;
+  --color-warn: #8a5a22;
+  --color-warn-soft: #f1e4d2;
+  --color-danger: #8f2d24;
+  --color-danger-soft: #f3ddd9;
+  --color-info: #2c4a5a;
+  --color-info-soft: #d9e4ea;
+
+  --color-background: #f3f0e8;
+  --color-foreground: #171614;
+  --color-card: #fbfaf6;
+  --color-card-foreground: #171614;
+  --color-primary: #2f3f38;
+  --color-primary-foreground: #f3f0e8;
+  --color-secondary: #e8e2d4;
+  --color-secondary-foreground: #171614;
+  --color-muted-foreground: #6b675f;
+  --color-destructive: #8f2d24;
+  --color-destructive-foreground: #fbfaf6;
+  --color-input: #ddd6c8;
+  --color-ring: #2f3f38;
+  --color-popover: #fbfaf6;
+  --color-popover-foreground: #171614;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --radius: 12px;
+
+  --shadow-border:
+    0px 0px 0px 1px rgba(23, 22, 20, 0.06),
+    0px 1px 2px -1px rgba(23, 22, 20, 0.06),
+    0px 2px 4px 0px rgba(23, 22, 20, 0.04);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body,
+  #app {
+    min-height: 100%;
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
