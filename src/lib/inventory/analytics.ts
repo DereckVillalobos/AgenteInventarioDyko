@@ -4,6 +4,7 @@ import type {
   AgentMode,
   BusinessParams,
   BuyClass,
+  CatalogCoverage,
   CatalogSnapshot,
   ExpiryNivel,
   HealthStatus,
@@ -15,7 +16,8 @@ import type {
   Trend,
   Velocity,
 } from "./types";
-import { DEFAULT_PARAMS } from "./types";
+import { COMPLEMENT_CATEGORIES, DEFAULT_PARAMS } from "./types";
+
 
 function sum(xs: number[]): number {
   return xs.reduce((a, b) => a + b, 0);
@@ -47,10 +49,11 @@ export function marginAfterDiscount(cost: number, price: number, discountPct: nu
 }
 
 export function toSnapshot(p: Product): CatalogSnapshot {
+  const n = p.dailySales.length;
   const sales90 = sum(p.dailySales);
   const sales30 = sum(p.dailySales.slice(-30));
-  const sales30Prev = sum(p.dailySales.slice(-60, -30));
-  const sales30Old = sum(p.dailySales.slice(-90, -60));
+  const sales30Prev = n >= 60 ? sum(p.dailySales.slice(-60, -30)) : null;
+  const sales30Old = n >= 90 ? sum(p.dailySales.slice(-90, -60)) : null;
   const sales7 = sum(p.dailySales.slice(-7));
   return {
     sku: p.sku,
@@ -71,7 +74,7 @@ export function toSnapshot(p: Product): CatalogSnapshot {
     sales30Prev,
     sales30Old,
     sales90,
-    avgDaily: sales90 / Math.max(p.dailySales.length, 1),
+    avgDaily: sales90 / Math.max(n, 1),
   };
 }
 
@@ -102,7 +105,8 @@ function velocityOf(avgDaily: number): Velocity {
   return "alta";
 }
 
-function trendOf(old30: number, prev30: number, last30: number): Trend {
+export function trendOf(old30: number | null, prev30: number | null, last30: number): Trend {
+  if (old30 == null || prev30 == null) return "sin_dato";
   if (old30 + prev30 + last30 === 0) return "sin_dato";
   const down = last30 < prev30 && prev30 < old30;
   const up = last30 > prev30 && prev30 > old30;
@@ -145,8 +149,8 @@ function assignAbc(items: { sku: string; revenue: number }[]): Map<string, AbcCl
 type SalesSlice = {
   sales7: number;
   sales30: number;
-  sales30Prev: number;
-  sales30Old: number;
+  sales30Prev: number | null;
+  sales30Old: number | null;
   sales90: number;
   avgDaily: number;
 };
@@ -347,10 +351,16 @@ function classifyBuy(args: {
 }
 
 function pickBundle(items: ProductMetrics[], current: Product): { sku: string; name: string } | null {
-  const cand = items
-    .filter((m) => m.product.sku !== current.sku && m.velocity === "alta" && m.product.stock > 0)
-    .sort((a, b) => b.avgDaily - a.avgDaily)[0];
-  return cand ? { sku: cand.product.sku, name: cand.product.name } : null;
+  const pool = items.filter(
+    (m) => m.product.sku !== current.sku && m.velocity === "alta" && m.product.stock > 0,
+  );
+  const byDaily = (a: ProductMetrics, b: ProductMetrics) => b.avgDaily - a.avgDaily;
+  const same = pool.filter((m) => m.product.category === current.category).sort(byDaily)[0];
+  if (same) return { sku: same.product.sku, name: same.product.name };
+  const allied = COMPLEMENT_CATEGORIES[current.category] ?? [];
+  const complement = pool.filter((m) => allied.includes(m.product.category)).sort(byDaily)[0];
+  if (complement) return { sku: complement.product.sku, name: complement.product.name };
+  return null;
 }
 
 function scoreItems(
@@ -415,6 +425,9 @@ function scoreItems(
     if (p.perishable && lots.length === 0) faltantes.push("sin lotes/fecha de vencimiento");
     if (sales90 === 0) faltantes.push("sin ventas en 90 días");
     if (!p.leadDays) faltantes.push("lead time no informado");
+    if (sales30Prev == null || sales30Old == null) {
+      faltantes.push("sin ventas 30–90 d: tendencia no calculable");
+    }
 
     return {
       product: p,
@@ -468,13 +481,15 @@ function scoreItems(
 }
 
 function salesFromProduct(p: Product): SalesSlice {
+  const d = p.dailySales;
+  const n = d.length;
   return {
-    sales90: sum(p.dailySales),
-    sales30: sum(p.dailySales.slice(-30)),
-    sales30Prev: sum(p.dailySales.slice(-60, -30)),
-    sales30Old: sum(p.dailySales.slice(-90, -60)),
-    sales7: sum(p.dailySales.slice(-7)),
-    avgDaily: sum(p.dailySales) / Math.max(p.dailySales.length, 1),
+    sales90: sum(d),
+    sales30: sum(d.slice(-30)),
+    sales30Prev: n >= 60 ? sum(d.slice(-60, -30)) : null,
+    sales30Old: n >= 90 ? sum(d.slice(-90, -60)) : null,
+    sales7: sum(d.slice(-7)),
+    avgDaily: sum(d) / Math.max(n, 1),
   };
 }
 
@@ -501,8 +516,8 @@ export function analyzeSnapshots(
       sales: {
         sales7: s.sales7,
         sales30: s.sales30,
-        sales30Prev: s.sales30Prev ?? 0,
-        sales30Old: s.sales30Old ?? 0,
+        sales30Prev: s.sales30Prev ?? null,
+        sales30Old: s.sales30Old ?? null,
         sales90: s.sales90,
         avgDaily: s.avgDaily,
       },
@@ -663,6 +678,7 @@ export function buildReport(
   metrics: ProductMetrics[],
   mode: AgentMode = "cuidadoso",
   today = todayLocalIso(),
+  coverage?: CatalogCoverage | null,
 ): InventoryReport {
   const stats = kpis(metrics);
   const view =
@@ -697,7 +713,11 @@ export function buildReport(
     }));
 
   const compras = view
-    .filter((m) => (mode === "rapido" ? m.orderAction === "comprar_ya" : true))
+    .filter((m) =>
+      mode === "rapido"
+        ? m.orderAction === "comprar_ya"
+        : true,
+    )
     .map((m) => ({
       sku: m.product.sku,
       producto: m.product.name,
@@ -719,6 +739,7 @@ export function buildReport(
     });
 
   const faltantes = [
+    ...(coverage?.note ? [coverage.note] : []),
     "No hay conteo físico: merma/shrinkage no se puede calcular (stock teórico vs real).",
     "No hay historial de compras/proveedor: el lead time usado es el parametrizado por SKU, no el real observado.",
     "Estacionalidad: calendario genérico CR (Madre, Navidad, regreso a clases); no hay histórico de eventos de Dyko.",
@@ -743,11 +764,7 @@ export function buildReport(
       : "Sin vencimientos críticos hoy.",
     `${compras.filter((c) => c.clasificacion === "comprar_ya").length} líneas comprar_ya · ${compras.filter((c) => c.clasificacion === "comprar_pronto").length} comprar_pronto.`,
     "InventarioIA no ejecuta compras ni descuentos: el administrador aprueba.",
-    mode === "rapido"
-      ? "Modo rápido: solo alertas críticas."
-      : mode === "verificado"
-        ? "Modo verificado: incluye consistencia 30d vs 90d."
-        : "Modo cuidadoso: reporte completo.",
+    mode === "rapido" ? "Modo rápido: solo alertas críticas." : mode === "verificado" ? "Modo verificado: incluye consistencia 30d vs 90d." : "Modo cuidadoso: reporte completo.",
   ].join(" ");
 
   return {
@@ -759,6 +776,9 @@ export function buildReport(
       en_quiebre: stats.crit,
       en_sobre_stock: stats.over,
       total_skus_analizados: stats.skuCount,
+      ...(coverage && coverage.total !== coverage.analyzed
+        ? { total_skus_recibidos: coverage.total }
+        : {}),
     },
     alertas_vencimiento: alertas,
     sugerencias_compra: mode === "rapido" ? compras.filter((c) => c.clasificacion === "comprar_ya") : compras,
