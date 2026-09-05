@@ -1,67 +1,66 @@
-# AgenteInventarioDyko · InventarioIA
+# AgenteInventarioDyko · InventarioIA + MermaIA
 
-Agente de inventario para **Dyko Intelligence**. Analista senior de rotación, margen, vencimientos y compras.
+Agentes de **Dyko Intelligence**. Analistas de bodega: rotación, margen, vencimientos, compras y merma vs conteo físico.
 
-**No ejecuta nada.** No emite órdenes de compra ni aplica descuentos. Propone; el humano aprueba.
+**No ejecutan nada.** No emiten OC, no aplican descuentos, no ajustan existencias. Proponen; el humano aprueba.
 
 Repo **privado**. Moneda: colones (CRC). Idioma: español.
 
-Demo: bodega Puntarenas. El motor es agnóstico al vertical (bodega, 3 Regalos, librería): solo necesita el `CatalogSnapshot`.
+Demo: bodega Puntarenas. El motor es agnóstico al vertical: InventarioIA necesita `CatalogSnapshot`; MermaIA necesita además `PhysicalCount[]`.
 
-## Qué hace
+## InventarioIA
 
 1. Detecta el 100% de SKU fuera de banda (quiebre inminente o sobre-stock).
-2. Vencimientos **crítico ≤7 / alerta ≤30 / vigilar ≤60** (configurable en `DEFAULT_PARAMS`) con descuento, bundle o liquidación que respeta **margen mínimo 25%**, salvo pérdida controlada justificada.
+2. Vencimientos **crítico ≤7 / alerta ≤30 / vigilar ≤60** con descuento, bundle o liquidación que respeta **margen mínimo 25%**, salvo pérdida controlada justificada.
 3. Sugerencia de compra: `cantidad = rotación diaria × (lead time + stock de seguridad) − stock actual`.
 4. Clasifica cada SKU: `comprar_ya` | `comprar_pronto` | `no_comprar` | `descontinuar` | `vigilar`.
-5. Entrega **JSON para Dyko** + resumen en lenguaje natural (<5 s de lectura).
+5. Entrega **JSON para Dyko** + resumen en lenguaje natural.
 
-## Modos
+### Modos
 
 | Modo | Uso | Comportamiento |
 |---|---|---|
 | `rapido` | Corrida diaria | Solo quiebre inminente y vencimiento ≤7 d |
 | `cuidadoso` | Revisión semanal (default) | Reporte completo |
-| `verificado` | Compra grande | Compara ventanas 30 d vs 90 d (self-consistency) |
+| `verificado` | Compra grande | Compara ventanas 30 d vs 90 d |
+
+## MermaIA (módulo hermano)
+
+Compara `stock teórico` con `conteo físico`. **No inventa conteos.** Si un SKU no está en el ciclo, es `sin_conteo` (dato faltante).
+
+Clases: `cuadrado` | `merma_operativa` | `posible_hurto` | `error_probable_conteo` | `sobrante` | `merma_no_clasificada` | `sin_conteo`.
+
+`posible_hurto` es hipótesis (faltante alto en no perecedero sin vencimiento), no sentencia. MermaIA no da de baja ni corrige el teórico: el click en Dyko es la aprobación.
+
+Contrato: `SPEC-MERMA.md`.
 
 ## Implantar en Dyko
 
-1. Mapea productos, lotes FEFO, ventas 90 días (y si puedes, 30+30 anteriores) y lead time a `CatalogSnapshot` (`src/lib/inventory/types.ts`).
+1. Mapea productos, lotes FEFO, ventas 90 días y lead time a `CatalogSnapshot` (`src/lib/inventory/types.ts`).
 2. `analyzeCatalog` / `analyzeSnapshots` calculan métricas **sin IA** — deterministas, auditables.
-3. `buildReport(metrics, modo)` produce el JSON del esquema Dyko.
-4. `askInventoryAgent` es InventarioIA: llama tools sobre ese snapshot. Copia el `handler` de `src/lib/agent/ask.ts` a tu API. `XAI_API_KEY` solo en servidor.
+3. `buildReport(metrics, modo)` produce el JSON de InventarioIA (`SPEC.md`).
+4. Mapea conteos a `PhysicalCount`. `analyzeShrinkage(metrics, counts)` / `buildShrinkageReport` → JSON de MermaIA (`SPEC-MERMA.md`).
+5. `askInventoryAgent` con `domain: "inventario" | "merma"`. Copia el handler de `src/lib/agent/ask.ts` a tu API. `XAI_API_KEY` solo en servidor.
 
-Si falta un dato crítico (lotes, ventas, lead time, conteo físico), el reporte lo declara en `datos_faltantes_o_incertidumbre`. **Nunca se inventa.**
+Si falta un dato crítico, el reporte lo declara. **Nunca se inventa.**
 
 ## Archivos clave
 
 | Pieza | Ruta |
 |---|---|
-| Tipos, params, JSON | `src/lib/inventory/types.ts` |
-| Motor (rotación, FEFO, margen, clasificación) | `src/lib/inventory/analytics.ts` |
-| Tests de contrato | `src/lib/inventory/analytics.test.ts` |
-| Agente + tools | `src/lib/agent/ask.ts` |
-| Panel | `src/components/agent/agent-panel.tsx` |
-| Contrato de salida | `SPEC.md` |
+| Tipos InventarioIA | `src/lib/inventory/types.ts` |
+| Motor inventario | `src/lib/inventory/analytics.ts` |
+| Tipos MermaIA | `src/lib/shrinkage/types.ts` |
+| Motor merma vs conteo | `src/lib/shrinkage/analytics.ts` |
+| Agente + tools (ambos) | `src/lib/agent/ask.ts` |
+| Panel (InventarioIA \| MermaIA) | `src/components/agent/agent-panel.tsx` |
+| Ruta merma | `src/routes/merma.tsx` |
+| Contratos | `SPEC.md` · `SPEC-MERMA.md` |
 
-## Reglas de negocio (no negociables)
+## Datos que los agentes no asumen
 
-- Cantidad sugerida = `ceil(rotación_diaria × (lead + seguridad)) − stock`, acotada a `maxStock`.
-- Quiebre inminente: días de cobertura < lead time del proveedor → `comprar_ya`.
-- Sobre-stock: cobertura > 90 días → `no_comprar`.
-- FEFO: si el lote a vencer cubre la demanda, `no_comprar`.
-- Descuento máximo que preserva margen: `floor((1 − (costo / ((1 − margenMin) × precio))) × 100)`.
-- Pérdida controlada **solo** por vencimiento inminente, marcada y con justificación.
-- Cada línea trae el *porqué* (dato que la disparó).
+Lotes en perecederos, ventas en 90 días, lead time observado, historial real de merma, cámaras, bitácora diaria. El calendario CR se anota como contexto; **no infla cantidades**.
 
-## Datos que el agente no asume
+## Roadmap (no incluido)
 
-Conteo físico (merma), historial real de proveedor/lead time observado, estacionalidad histórica de Dyko, lotes en perecederos, ventas en 90 días.
-
-El calendario CR (Madre, Independencia, Navidad, regreso a clases) se anota como contexto; **no infla cantidades**.
-
-## Roadmap (no incluido en este módulo)
-
-Mermas vs conteo físico, canasta, precio por elasticidad, forecast estacional, simulador de caja/bodega, alertas de proveedor.
-
-Esos agentes hermanos van **después**. Este módulo es el agente base.
+Canasta, precio por elasticidad, forecast estacional, simulador de caja/bodega, alertas de proveedor.

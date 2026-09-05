@@ -3,17 +3,22 @@ import { analyzeCatalog, briefing, buildAlerts, buildReport, kpis, toSnapshot } 
 import { buildCatalog } from "./seed";
 import type { AgentMode, CatalogSnapshot, InventoryReport, Product } from "./types";
 import { DEFAULT_PARAMS } from "./types";
+import { analyzeShrinkage, buildShrinkageReport, shrinkageKpis } from "@/lib/shrinkage/analytics";
+import { buildPhysicalCounts } from "@/lib/shrinkage/seed";
+import type { PhysicalCount, ShrinkageReport } from "@/lib/shrinkage/types";
 
 
 type InventoryState = {
   ready: boolean;
   products: Product[];
+  counts: PhysicalCount[];
   mode: AgentMode;
   init: () => void;
   reset: () => void;
   setMode: (mode: AgentMode) => void;
   adjustStock: (id: string, delta: number) => void;
   setStock: (id: string, qty: number) => void;
+  setCount: (sku: string, qty: number) => void;
 };
 
 function withStock(p: Product, next: number): Product {
@@ -45,12 +50,13 @@ function withStock(p: Product, next: number): Product {
 export const useInventory = create<InventoryState>((set, get) => ({
   ready: false,
   products: [],
+  counts: [],
   mode: "cuidadoso",
   init: () => {
     if (get().ready) return;
-    set({ ready: true, products: buildCatalog() });
+    set({ ready: true, products: buildCatalog(), counts: buildPhysicalCounts() });
   },
-  reset: () => set({ ready: true, products: buildCatalog() }),
+  reset: () => set({ ready: true, products: buildCatalog(), counts: buildPhysicalCounts() }),
   setMode: (mode) => set({ mode }),
   adjustStock: (id, delta) =>
     set({
@@ -60,14 +66,33 @@ export const useInventory = create<InventoryState>((set, get) => ({
     set({
       products: get().products.map((p) => (p.id === id ? withStock(p, qty) : p)),
     }),
+  setCount: (sku, qty) => {
+    const n = Math.max(0, Math.round(qty));
+    const counts = get().counts;
+    const i = counts.findIndex((c) => c.sku === sku);
+    if (i >= 0) {
+      const next = counts.map((c) => (c.sku === sku ? { ...c, countedQty: n } : c));
+      set({ counts: next });
+      return;
+    }
+    set({
+      counts: [
+        ...counts,
+        { sku, countedQty: n, countedAt: new Date().toISOString().slice(0, 10), countedBy: "Ajuste en pantalla" },
+      ],
+    });
+  },
 }));
 
 export function useAnalysis() {
   const products = useInventory((s) => s.products);
   const ready = useInventory((s) => s.ready);
   const mode = useInventory((s) => s.mode);
+  const counts = useInventory((s) => s.counts);
   const metrics = ready ? analyzeCatalog(products) : [];
+  const shrinkRows = ready ? analyzeShrinkage(metrics, counts) : [];
   const report: InventoryReport | null = ready ? buildReport(metrics, mode) : null;
+  const shrinkReport: ShrinkageReport | null = ready ? buildShrinkageReport(shrinkRows) : null;
   return {
     ready,
     products,
@@ -79,5 +104,9 @@ export function useAnalysis() {
     briefing: ready ? briefing(metrics) : [],
     snapshot: ready ? products.map(toSnapshot) : ([] as CatalogSnapshot[]),
     report,
+    counts,
+    shrinkRows,
+    shrinkReport,
+    shrinkKpis: ready ? shrinkageKpis(shrinkRows) : null,
   };
 }
