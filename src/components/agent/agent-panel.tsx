@@ -41,9 +41,17 @@ export async function sendToAgent(text: string, snapshot: CatalogSnapshot[], mod
       .getState()
       .messages.filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }));
-    const counts = useInventory.getState().counts;
+    const inv = useInventory.getState();
     const result = await askInventoryAgent({
-      data: { messages: history, catalog: snapshot, mode, domain, counts },
+      data: {
+        messages: history,
+        catalog: snapshot,
+        mode,
+        domain,
+        counts: inv.counts,
+        params: inv.params,
+        tenant: inv.tenant,
+      },
     });
     if (result.ok) {
       push({ id: uid(), role: "assistant", content: result.text, traces: result.traces });
