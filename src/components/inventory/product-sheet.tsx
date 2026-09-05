@@ -8,11 +8,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { formatColon, formatDate, formatQty } from "@/lib/inventory/format";
+import { formatColon, formatDate, formatQty, TREND_LABEL } from "@/lib/inventory/format";
 import { useInventory } from "@/lib/inventory/store";
 import type { ProductMetrics } from "@/lib/inventory/types";
 import { CATEGORY_LABEL } from "@/lib/inventory/types";
-import { AbcBadge, StatusBadge, VelocityBadge } from "./status-badge";
+import { AbcBadge, BuyBadge, StatusBadge, VelocityBadge } from "./status-badge";
 import { Sparkline } from "./sparkline";
 
 export function ProductSheet({
@@ -39,6 +39,7 @@ export function ProductSheet({
             <StatusBadge status={metric.status} />
             <AbcBadge abc={metric.abc} />
             <VelocityBadge velocity={metric.velocity} />
+            <BuyBadge clasificacion={metric.orderAction} />
           </div>
 
           <div className="rounded-lg bg-bg-warm p-4">
@@ -105,6 +106,14 @@ export function ProductSheet({
               <dt className="text-xs text-muted">Lead time</dt>
               <dd>{p.leadDays} días</dd>
             </div>
+            <div>
+              <dt className="text-xs text-muted">Tendencia</dt>
+              <dd>{TREND_LABEL[metric.tendencia]}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Margen actual</dt>
+              <dd className="tabular-nums">{Math.round(metric.marginPct * 100)}%</dd>
+            </div>
           </dl>
 
           <div>
@@ -129,22 +138,28 @@ export function ProductSheet({
           </div>
 
           <div className="rounded-lg border border-border p-4">
-            <p className="text-xs font-medium tracking-wide text-muted uppercase">Pedido</p>
+            <p className="text-xs font-medium tracking-wide text-muted uppercase">Pedido (propuesta)</p>
             <p className="mt-1 text-sm">{metric.orderReason}</p>
             {metric.orderQty > 0 ? (
               <Badge tone="ink" className="mt-2">
-                Pedir {formatQty(metric.orderQty, p.unit)} · {formatColon(metric.orderQty * p.cost)}
+                Sugerir {formatQty(metric.orderQty, p.unit)} · {formatColon(metric.orderQty * p.cost)}
               </Badge>
             ) : (
-              <Badge className="mt-2">No pedir</Badge>
+              <Badge className="mt-2">No comprar</Badge>
             )}
           </div>
 
           {metric.promo ? (
             <div className="rounded-lg bg-warn-soft p-4 text-warn">
-              <p className="text-xs font-medium tracking-wide uppercase">Promoción</p>
+              <p className="text-xs font-medium tracking-wide uppercase">
+                Promoción · {metric.promo.tipo}
+                {metric.promo.perdida_controlada ? " · pérdida controlada" : ""}
+              </p>
               <p className="mt-1 font-display text-2xl tracking-tight">−{metric.promo.discount}%</p>
-              <p className="mt-1 text-sm">{metric.promo.reason}</p>
+              <p className="mt-1 text-sm">{metric.promo.justificacion}</p>
+              {metric.promo.bundleName ? (
+                <p className="mt-1 text-xs">Bundle: {metric.promo.bundleName}</p>
+              ) : null}
             </div>
           ) : null}
         </div>
