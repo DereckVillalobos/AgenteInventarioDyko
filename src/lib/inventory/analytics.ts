@@ -202,15 +202,10 @@ function promoFor(args: {
     };
   };
 
-  if (expiredQty > 0) {
-    return make(
-      "liquidacion",
-      Math.max(50, maxPct),
-      `${expiredQty} ${p.unit} ya vencidos. Liquidar o dar de baja.`,
-      "critico",
-      true,
-    );
-  }
+  // Un lote vencido nunca puede desencadenar una promoción. Incluso cuando
+  // existen otros lotes válidos, no sugerimos descuentos hasta separar físicamente
+  // las unidades vencidas. La alerta de inmovilización se emite en buildAlerts.
+  if (expiredQty > 0) return null;
   if (daysToExpiry !== null && daysToExpiry <= 2 && expiring7Qty > 0) {
     return make(
       "descuento",
@@ -556,7 +551,10 @@ export function buildAlerts(metrics: ProductMetrics[]): InventoryAlert[] {
         kind: "vencimiento",
         sku: p.sku,
         title: m.status === "vencido" ? `${p.name}: lote vencido` : `${p.name} vence en ${m.daysToExpiry} d`,
-        detail: m.promo?.justificacion ?? `${m.expiring7Qty} ${p.unit} en ventana crítica.`,
+        detail:
+          m.expiredQty > 0
+            ? `${m.expiredQty} ${p.unit} vencidas: separar del inventario vendible y gestionar baja o devolución. No promocionar.`
+            : m.promo?.justificacion ?? `${m.expiring7Qty} ${p.unit} en ventana crítica.`,
         severity: "alta",
       });
     }
