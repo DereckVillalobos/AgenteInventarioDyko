@@ -1,10 +1,14 @@
 # AgenteInventarioDyko · InventarioIA + MermaIA
 
+> **Estado (2026-10-17):** motores analíticos y pantallas React, **no aplicación web ejecutable por sí sola**. El ZIP de Claude con proveedores LLM intercambiables y [PR #1](https://github.com/DereckVillalobos/AgenteInventarioDyko/pull/1) aún no están fusionados. **No publicar la ruta de agente sin autenticar.**
+>
+> **[Leer inventario de módulos, pasos para demo y entrega a Claude](docs/ESTADO_Y_HANDOFF.md)**
+
 Agentes de **Dyko Intelligence**. Analistas de bodega: rotación, margen, vencimientos, compras y merma vs conteo físico.
 
 **No ejecutan nada.** No emiten OC, no aplican descuentos, no ajustan existencias. Proponen; el humano aprueba.
 
-Repo **privado**. Moneda: colones (CRC). Idioma: español.
+Repositorio **público**. No subir claves ni información real del negocio. Moneda: colones (CRC). Idioma: español.
 
 Demo: bodega Puntarenas. Empresa y sucursal son **parámetro de tenant** (engranaje en el header), no constantes de código.
 
@@ -34,7 +38,7 @@ El agente **no** toma los primeros 80 SKU. Analiza hasta `AGENT_CATALOG_CAP` (40
 
 Bundles solo con la **misma categoría** o el mapa `COMPLEMENT_CATEGORIES` (snacks↔bebidas, etc.).
 
-El LLM reintenta 3 veces con backoff. Respaldo: `LLM_PROVIDER=openai` + `LLM_API_KEY` (y opcional `LLM_BASE_URL` / `LLM_MODEL`). Si xAI cae y hay clave de respaldo, usa el otro.
+**Nota de versiones:** la descripción del respaldo LLM corresponde a la intención del diseño, no a una implementación verificada en `main`. La solución multíproveedor de Claude está en el ZIP pendiente de integrar. Ver documento de estado.
 
 ## Implantar en Dyko
 
