@@ -45,7 +45,7 @@ function ExpiryBoard() {
         <Stat label="Alerta ≤30 d" value={String(groups.alerta.length)} />
         <Stat label="En riesgo a costo" value={formatColon(loss)} />
       </div>
-      <Group title="Vencidos — liquidar o dar de baja" rows={groups.expired} onOpen={setOpen} />
+      <Group title="Vencidos — separar y gestionar baja o devolución" rows={groups.expired} onOpen={setOpen} />
       <Group title="Crítico — 7 días o menos" rows={groups.critico} onOpen={setOpen} />
       <Group title="Alerta — 8 a 30 días" rows={groups.alerta} onOpen={setOpen} />
       <Group title="Vigilar — 31 a 60 días" rows={groups.vigilar} onOpen={setOpen} />

@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   analyzeCatalog,
+  buildAlerts,
   analyzeSnapshots,
   buildReport,
   marginAfterDiscount,
@@ -230,5 +231,47 @@ describe("reporte JSON Dyko", () => {
     const report = buildReport(metrics, "rapido", "2026-09-04");
     assert.ok(report.sugerencias_compra.every((r) => r.clasificacion === "comprar_ya"));
     assert.ok(report.alertas_vencimiento.every((a) => a.nivel === "critico"));
+  });
+});
+
+describe("seguridad de vencimientos", () => {
+  it("nunca propone liquidar ni descontar unidades vencidas", () => {
+    const metrics = analyzeCatalog(
+      [
+        product({
+          sku: "VENCIDO",
+          name: "Lácteo vencido",
+          category: "lacteos",
+          perishable: true,
+          stock: 10,
+          lots: [{ id: "lote-vencido", qty: 10, expiry: "2026-10-01" }],
+        }),
+      ],
+      "2026-10-14",
+    );
+    assert.ok((metrics[0]?.expiredQty ?? 0) > 0);
+    assert.equal(metrics[0]?.promo, null);
+    const alert = buildAlerts(metrics).find((item) => item.kind === "vencimiento");
+    assert.ok(alert);
+    assert.match(alert.detail, /No promocionar/);
+    assert.match(alert.detail, /vencidas/);
+  });
+
+  it("mantiene las propuestas para lotes próximos a vencer pero aún vigentes", () => {
+    const metrics = analyzeCatalog(
+      [
+        product({
+          sku: "PROXIMO",
+          name: "Lácteo próximo a vencer",
+          category: "lacteos",
+          perishable: true,
+          stock: 10,
+          lots: [{ id: "lote-vigente", qty: 10, expiry: "2026-10-16" }],
+        }),
+      ],
+      "2026-10-14",
+    );
+    assert.equal(metrics[0]?.expiredQty, 0);
+    assert.ok(metrics[0]?.promo);
   });
 });

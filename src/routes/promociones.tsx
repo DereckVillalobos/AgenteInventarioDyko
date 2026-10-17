@@ -11,7 +11,7 @@ function PromosPage() {
   return (
     <AppShell
       title="Promociones"
-      subtitle="Descuento máximo que preserva el margen mínimo (25%). Pérdida controlada solo si vence de inmediato — requiere tu aprobación."
+      subtitle="Promociones solo para productos vigentes; cada propuesta respeta el margen mínimo o exige aprobación explícita."
     >
       <PageGate>
         <PromoBoard />
